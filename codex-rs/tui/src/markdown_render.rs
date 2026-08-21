@@ -40,6 +40,7 @@
 //! key/value records.
 
 use crate::markdown_text_merge::DecodedTextMerge;
+use crate::media::resolve_image_source;
 use crate::render::highlight::foreground_style_for_scopes;
 use crate::render::highlight::highlight_code_to_lines;
 use crate::render::line_utils::line_to_static;
@@ -365,6 +366,7 @@ struct LinkState {
 #[derive(Clone, Debug)]
 struct ImageState {
     destination: String,
+    source_error: Option<String>,
 }
 
 fn should_render_link_destination(dest_url: &str) -> bool {
@@ -1798,7 +1800,13 @@ where
     }
 
     fn start_image(&mut self, destination: String) {
-        self.image = Some(ImageState { destination });
+        let source_error = resolve_image_source(&destination)
+            .err()
+            .map(|error| error.to_string());
+        self.image = Some(ImageState {
+            destination,
+            source_error,
+        });
         self.push_image_fallback_span("[image: ".into());
     }
 
@@ -1821,6 +1829,12 @@ where
             self.push_annotated(destination);
         }
         self.push_image_fallback_span(")".into());
+        if let Some(error) = image.source_error {
+            self.push_image_fallback_span(Span::styled(
+                format!(" [image unavailable: {error}]"),
+                Style::new().dark_gray(),
+            ));
+        }
     }
 
     fn push_image_fallback_span(&mut self, span: Span<'static>) {
