@@ -9,11 +9,17 @@ use anyhow::Result;
 use anyhow::bail;
 use base64::Engine as _;
 use base64::engine::general_purpose;
+#[cfg(test)]
 use codex_terminal_detection::Multiplexer;
+#[cfg(test)]
 use codex_terminal_detection::TerminalInfo;
+#[cfg(test)]
 use codex_terminal_detection::TerminalName;
-use codex_terminal_detection::terminal_info;
 use image::imageops::FilterType;
+
+pub(crate) use crate::media::ImageProtocol;
+use crate::media::ImageSupport;
+use crate::media::ImageUnsupportedReason;
 
 use super::sixel;
 
@@ -21,15 +27,6 @@ const ESC: &str = "\x1b";
 const ST: &str = "\x1b\\";
 const KITTY_CHUNK_SIZE: usize = 4096;
 const SIXEL_CACHE_VERSION: &str = "v2";
-const ITERM2_KITTY_MIN_VERSION: (u64, u64, u64) = (3, 6, 0);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImageProtocol {
-    Kitty,
-    KittyLocalFile,
-    Sixel,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PetImageSupport {
     Supported(ImageProtocol),
@@ -110,110 +107,24 @@ impl FromStr for ProtocolSelection {
 }
 
 pub(crate) fn detect_pet_image_support() -> PetImageSupport {
-    if env::var_os("TMUX").is_some() || env::var_os("TMUX_PANE").is_some() {
-        return PetImageSupport::Unsupported(PetImageUnsupportedReason::Tmux);
-    }
-
-    if env::var_os("ZELLIJ").is_some()
-        || env::var_os("ZELLIJ_SESSION_NAME").is_some()
-        || env::var_os("ZELLIJ_VERSION").is_some()
-    {
-        return PetImageSupport::Unsupported(PetImageUnsupportedReason::Zellij);
-    }
-
-    if env::var_os("KITTY_WINDOW_ID").is_some() {
-        return PetImageSupport::Supported(ImageProtocol::Kitty);
-    }
-
-    if env::var_os("WEZTERM_EXECUTABLE").is_some() || env::var_os("WEZTERM_VERSION").is_some() {
-        return PetImageSupport::Supported(ImageProtocol::Kitty);
-    }
-
-    pet_image_support_for_terminal(&terminal_info())
+    pet_image_support(crate::media::detect_image_support())
 }
 
+#[cfg(test)]
 fn pet_image_support_for_terminal(info: &TerminalInfo) -> PetImageSupport {
-    match info.multiplexer {
-        Some(Multiplexer::Tmux { .. }) => {
-            return PetImageSupport::Unsupported(PetImageUnsupportedReason::Tmux);
-        }
-        Some(Multiplexer::Zellij { .. }) => {
-            return PetImageSupport::Unsupported(PetImageUnsupportedReason::Zellij);
-        }
-        None => {}
+    pet_image_support(crate::media::image_support_for_terminal(info))
+}
+
+fn pet_image_support(support: ImageSupport) -> PetImageSupport {
+    match support {
+        ImageSupport::Supported(protocol) => PetImageSupport::Supported(protocol),
+        ImageSupport::Unsupported(reason) => PetImageSupport::Unsupported(match reason {
+            ImageUnsupportedReason::Tmux => PetImageUnsupportedReason::Tmux,
+            ImageUnsupportedReason::Zellij => PetImageUnsupportedReason::Zellij,
+            ImageUnsupportedReason::Iterm2TooOld => PetImageUnsupportedReason::Iterm2TooOld,
+            ImageUnsupportedReason::Terminal => PetImageUnsupportedReason::Terminal,
+        }),
     }
-
-    if supports_iterm2_kitty_graphics(info) {
-        return PetImageSupport::Supported(ImageProtocol::KittyLocalFile);
-    }
-
-    if is_iterm2_terminal(info) {
-        return PetImageSupport::Unsupported(PetImageUnsupportedReason::Iterm2TooOld);
-    }
-
-    if supports_kitty_graphics(info) {
-        return PetImageSupport::Supported(ImageProtocol::Kitty);
-    }
-
-    if supports_sixel(info) {
-        return PetImageSupport::Supported(ImageProtocol::Sixel);
-    }
-
-    PetImageSupport::Unsupported(PetImageUnsupportedReason::Terminal)
-}
-
-fn supports_iterm2_kitty_graphics(info: &TerminalInfo) -> bool {
-    is_iterm2_terminal(info)
-        && version_is_at_least(
-            info.version.as_deref(),
-            /*minimum*/ ITERM2_KITTY_MIN_VERSION,
-        )
-}
-
-fn is_iterm2_terminal(info: &TerminalInfo) -> bool {
-    matches!(info.name, TerminalName::Iterm2)
-        || terminal_field_contains(info.term_program.as_deref(), "iterm")
-}
-
-fn supports_kitty_graphics(info: &TerminalInfo) -> bool {
-    matches!(
-        info.name,
-        TerminalName::Ghostty | TerminalName::Kitty | TerminalName::WezTerm
-    ) || terminal_field_contains(info.term.as_deref(), "kitty")
-        || terminal_field_contains(info.term.as_deref(), "ghostty")
-        || terminal_field_contains(info.term.as_deref(), "wezterm")
-        || terminal_field_contains(info.term_program.as_deref(), "kitty")
-        || terminal_field_contains(info.term_program.as_deref(), "ghostty")
-        || terminal_field_contains(info.term_program.as_deref(), "wezterm")
-}
-
-fn supports_sixel(info: &TerminalInfo) -> bool {
-    matches!(info.name, TerminalName::WindowsTerminal)
-        || terminal_field_contains(info.term.as_deref(), "sixel")
-        || terminal_field_contains(info.term.as_deref(), "mlterm")
-        || terminal_field_contains(info.term.as_deref(), "foot")
-}
-
-fn terminal_field_contains(value: Option<&str>, needle: &str) -> bool {
-    value.is_some_and(|value| value.to_ascii_lowercase().contains(needle))
-}
-
-fn version_is_at_least(version: Option<&str>, minimum: (u64, u64, u64)) -> bool {
-    parse_dotted_version(version).is_some_and(|version| version >= minimum)
-}
-
-fn parse_dotted_version(version: Option<&str>) -> Option<(u64, u64, u64)> {
-    let version = version?;
-    let mut parts = version.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next().unwrap_or("0").parse().ok()?;
-    let patch = parts.next().unwrap_or("0").parse().ok()?;
-
-    if parts.next().is_some() {
-        return None;
-    }
-
-    Some((major, minor, patch))
 }
 
 pub fn kitty_delete_image(image_id: u32) -> String {
@@ -646,12 +557,21 @@ mod tests {
 
     #[test]
     fn parse_dotted_version_requires_simple_numeric_components() {
-        assert_eq!(parse_dotted_version(Some("3.6.10")), Some((3, 6, 10)));
-        assert_eq!(parse_dotted_version(Some("3.6")), Some((3, 6, 0)));
-        assert_eq!(parse_dotted_version(Some("3")), Some((3, 0, 0)));
-        assert_eq!(parse_dotted_version(Some("3.6.10.1")), None);
-        assert_eq!(parse_dotted_version(Some("3.6beta")), None);
-        assert_eq!(parse_dotted_version(/*version*/ None), None);
+        assert_eq!(
+            crate::media::parse_dotted_version(Some("3.6.10")),
+            Some((3, 6, 10))
+        );
+        assert_eq!(
+            crate::media::parse_dotted_version(Some("3.6")),
+            Some((3, 6, 0))
+        );
+        assert_eq!(
+            crate::media::parse_dotted_version(Some("3")),
+            Some((3, 0, 0))
+        );
+        assert_eq!(crate::media::parse_dotted_version(Some("3.6.10.1")), None);
+        assert_eq!(crate::media::parse_dotted_version(Some("3.6beta")), None);
+        assert_eq!(crate::media::parse_dotted_version(/*version*/ None), None);
     }
 
     #[test]
