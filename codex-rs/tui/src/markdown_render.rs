@@ -40,6 +40,10 @@
 //! key/value records.
 
 use crate::markdown_text_merge::DecodedTextMerge;
+use crate::media::MediaLayout;
+use crate::media::MediaNode;
+use crate::media::MediaPlaceholderRows;
+use crate::media::MediaPlacementRequest;
 use crate::media::resolve_image_source;
 use crate::render::highlight::foreground_style_for_scopes;
 use crate::render::highlight::highlight_code_to_lines;
@@ -342,13 +346,56 @@ pub(crate) fn render_markdown_lines_with_width_cwd_and_hidden_link_destinations(
     cwd: Option<&Path>,
     is_hidden_link_destination: &dyn Fn(&str) -> bool,
 ) -> Vec<HyperlinkLine> {
+    render_markdown_layout_with_width_cwd_and_hidden_link_destinations(
+        input,
+        width,
+        cwd,
+        is_hidden_link_destination,
+        /*image_placeholder_rows*/ None,
+    )
+    .lines
+}
+
+pub(crate) fn render_markdown_media_layout_with_width_cwd_and_hidden_link_destinations(
+    input: &str,
+    width: usize,
+    cwd: Option<&Path>,
+    is_hidden_link_destination: &dyn Fn(&str) -> bool,
+    image_placeholder_rows: MediaPlaceholderRows,
+) -> MediaLayout {
+    render_markdown_layout_with_width_cwd_and_hidden_link_destinations(
+        input,
+        Some(width),
+        cwd,
+        is_hidden_link_destination,
+        Some(image_placeholder_rows),
+    )
+}
+
+fn render_markdown_layout_with_width_cwd_and_hidden_link_destinations(
+    input: &str,
+    width: Option<usize>,
+    cwd: Option<&Path>,
+    is_hidden_link_destination: &dyn Fn(&str) -> bool,
+    image_placeholder_rows: Option<MediaPlaceholderRows>,
+) -> MediaLayout {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
     let parser = DecodedTextMerge::new(Parser::new_ext(input, options).into_offset_iter());
-    let mut w = Writer::new(input, parser, width, cwd, is_hidden_link_destination);
+    let mut w = Writer::new(
+        input,
+        parser,
+        width,
+        cwd,
+        is_hidden_link_destination,
+        image_placeholder_rows,
+    );
     w.run();
-    w.text
+    MediaLayout {
+        lines: w.text,
+        placements: w.media_placements,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -367,6 +414,9 @@ struct LinkState {
 struct ImageState {
     destination: String,
     source_error: Option<String>,
+    alt: String,
+    ordinal: usize,
+    use_placeholder: bool,
 }
 
 fn should_render_link_destination(dest_url: &str) -> bool {
@@ -409,6 +459,9 @@ where
     list_item_start_line_counts: Vec<usize>,
     link: Option<LinkState>,
     image: Option<ImageState>,
+    image_placeholder_rows: Option<MediaPlaceholderRows>,
+    media_placements: Vec<MediaPlacementRequest>,
+    next_image_ordinal: usize,
     needs_newline: bool,
     pending_marker_line: bool,
     in_paragraph: bool,
@@ -438,6 +491,7 @@ where
         wrap_width: Option<usize>,
         cwd: Option<&Path>,
         is_hidden_link_destination: &'policy dyn Fn(&str) -> bool,
+        image_placeholder_rows: Option<MediaPlaceholderRows>,
     ) -> Self {
         Self {
             input,
@@ -451,6 +505,9 @@ where
             list_item_start_line_counts: Vec::new(),
             link: None,
             image: None,
+            image_placeholder_rows,
+            media_placements: Vec::new(),
+            next_image_ordinal: 0,
             needs_newline: false,
             pending_marker_line: false,
             in_paragraph: false,
@@ -654,6 +711,12 @@ where
     }
 
     fn text(&mut self, text: CowStr<'a>) {
+        if let Some(image) = self.image.as_mut() {
+            image.alt.push_str(&text);
+            if image.use_placeholder {
+                return;
+            }
+        }
         if self.suppressing_local_link_label() {
             return;
         }
@@ -708,6 +771,12 @@ where
     }
 
     fn code(&mut self, code: CowStr<'a>) {
+        if let Some(image) = self.image.as_mut() {
+            image.alt.push_str(&code);
+            if image.use_placeholder {
+                return;
+            }
+        }
         if self.suppressing_local_link_label() {
             return;
         }
@@ -759,6 +828,14 @@ where
     }
 
     fn hard_break(&mut self) {
+        if let Some(image) = self.image.as_mut()
+            && image.use_placeholder
+        {
+            if !image.alt.ends_with(' ') {
+                image.alt.push(' ');
+            }
+            return;
+        }
         if self.suppressing_local_link_label() {
             return;
         }
@@ -771,6 +848,14 @@ where
     }
 
     fn soft_break(&mut self) {
+        if let Some(image) = self.image.as_mut()
+            && image.use_placeholder
+        {
+            if !image.alt.ends_with(' ') {
+                image.alt.push(' ');
+            }
+            return;
+        }
         if self.suppressing_local_link_label() {
             return;
         }
@@ -1803,17 +1888,67 @@ where
         let source_error = resolve_image_source(&destination)
             .err()
             .map(|error| error.to_string());
+        let ordinal = self.next_image_ordinal;
+        self.next_image_ordinal += 1;
+        let use_placeholder = self.image_placeholder_rows.is_some()
+            && source_error.is_none()
+            && !self.in_table_cell();
+        if use_placeholder
+            && self
+                .current_line_content
+                .as_ref()
+                .is_some_and(|line| !line.line.spans.is_empty())
+        {
+            self.flush_current_line();
+        }
         self.image = Some(ImageState {
             destination,
             source_error,
+            alt: String::new(),
+            ordinal,
+            use_placeholder,
         });
-        self.push_image_fallback_span("[image: ".into());
+        if !use_placeholder {
+            self.push_image_fallback_span("[image: ".into());
+        }
     }
 
     fn end_image(&mut self) {
         let Some(image) = self.image.take() else {
             return;
         };
+
+        if image.use_placeholder
+            && let Some(image_placeholder_rows) = self.image_placeholder_rows
+        {
+            if self.current_line_content.is_none() {
+                self.push_line(Line::default());
+            }
+            let x = Self::spans_display_width(&self.current_initial_indent);
+            let row = self.text.len();
+            let rows = image_placeholder_rows.get();
+            for _ in 1..rows {
+                self.push_line(Line::default());
+            }
+            self.flush_current_line();
+
+            let x = u16::try_from(x).unwrap_or(u16::MAX);
+            let y = u16::try_from(row).unwrap_or(u16::MAX);
+            let width = self
+                .wrap_width
+                .and_then(|width| u16::try_from(width).ok())
+                .unwrap_or(u16::MAX)
+                .saturating_sub(x);
+            self.media_placements.push(MediaPlacementRequest {
+                node: MediaNode::Image {
+                    source: image.destination,
+                    alt: image.alt,
+                    ordinal: image.ordinal,
+                },
+                rect: ratatui::layout::Rect::new(x, y, width, rows),
+            });
+            return;
+        }
 
         self.push_image_fallback_span("] (".into());
         let span = Span::styled(image.destination.clone(), self.styles.link);
@@ -2530,6 +2665,7 @@ mod tests {
             /*wrap_width*/ Some(80),
             /*cwd*/ None,
             &never_hide_link_destination,
+            /*image_placeholder_rows*/ None,
         );
         let wrapped = writer.wrap_cell(&cell, /*width*/ 40);
         let rendered = wrapped

@@ -47,7 +47,14 @@ pub(crate) fn render_streaming_markdown_lines_with_width_and_cwd(
         last_start: 0,
         first_is_html: false,
     };
-    let mut writer = Writer::new(input, parser, width, cwd, &never_hide_link_destination);
+    let mut writer = Writer::new(
+        input,
+        parser,
+        width,
+        cwd,
+        &never_hide_link_destination,
+        /*image_placeholder_rows*/ None,
+    );
     writer.run();
     StreamingMarkdownRender {
         lines: writer.text,

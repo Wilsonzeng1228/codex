@@ -3,6 +3,7 @@
 use super::transcript::ActiveCellLayoutCache;
 use super::transcript::ActiveCellLayoutCacheKey;
 use super::*;
+use crate::terminal_hyperlinks::visible_lines;
 use std::cell::Cell;
 
 impl ChatWidget {
@@ -112,7 +113,10 @@ struct PersistentActiveCellLayout<'a> {
 impl Renderable for TranscriptAreaRenderable<'_> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let area = self.child_area(area);
-        let lines = self.child.display_lines(area.width);
+        let layout = self
+            .child
+            .display_media_layout(area.width, /*image_placeholder_rows*/ None);
+        let lines = visible_lines(layout.lines);
         let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
         let y = if area.height == 0 {
             0

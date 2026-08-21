@@ -1,4 +1,5 @@
 mod image;
+mod layout;
 mod node;
 mod protocol;
 mod resolver;
@@ -16,6 +17,9 @@ pub(crate) use image::MediaId;
 pub(crate) use image::kitty_delete_image;
 pub(crate) use image::kitty_transmit_png_file_with_id;
 pub(crate) use image::kitty_transmit_png_with_id;
+pub(crate) use layout::MediaLayout;
+pub(crate) use layout::MediaPlaceholderRows;
+pub(crate) use layout::MediaPlacementRequest;
 pub(crate) use node::MediaNode;
 pub(crate) use node::extract_media_nodes;
 pub(crate) use protocol::ImageProtocol;

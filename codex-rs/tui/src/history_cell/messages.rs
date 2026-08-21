@@ -554,6 +554,38 @@ impl HistoryCell for AgentMarkdownCell {
         &self.media_nodes
     }
 
+    fn display_media_layout(
+        &self,
+        width: u16,
+        image_placeholder_rows: Option<crate::media::MediaPlaceholderRows>,
+    ) -> crate::media::MediaLayout {
+        let Some(image_placeholder_rows) = image_placeholder_rows else {
+            return crate::media::MediaLayout::text_only(self.display_hyperlink_lines(width));
+        };
+        let Some(wrap_width) =
+            crate::width::usable_content_width_u16(width, /*reserved_cols*/ 2)
+        else {
+            return crate::media::MediaLayout::text_only(self.display_hyperlink_lines(width));
+        };
+        let mut layout =
+            crate::markdown::render_markdown_agent_media_layout_with_cwd_and_visualizations(
+                &self.markdown_source,
+                wrap_width,
+                Some(self.cwd.as_path()),
+                self.inline_visualization_context.as_ref(),
+                image_placeholder_rows,
+            );
+        layout.lines = normalize_whitespace_only_hyperlink_lines(prefix_hyperlink_lines(
+            layout.lines,
+            "• ".dim(),
+            "  ".into(),
+        ));
+        for placement in &mut layout.placements {
+            placement.rect.x = placement.rect.x.saturating_add(/*prefix width*/ 2);
+        }
+        layout
+    }
+
     fn has_stable_transcript_height(&self) -> bool {
         self.rendered_lines.is_some()
     }

@@ -89,8 +89,13 @@ impl App {
         cell: &dyn HistoryCell,
         width: u16,
     ) -> Vec<HyperlinkLine> {
-        let mut display =
-            cell.display_hyperlink_lines_for_mode(width, self.chat_widget.history_render_mode());
+        let mut display = cell
+            .display_media_layout_for_mode(
+                width,
+                self.chat_widget.history_render_mode(),
+                /*image_placeholder_rows*/ None,
+            )
+            .lines;
         if !display.is_empty() && !cell.is_stream_continuation() {
             if self.has_emitted_history_lines {
                 display.insert(/*index*/ 0, HyperlinkLine::new(Line::from("")));
@@ -584,7 +589,12 @@ impl App {
             start -= 1;
             let cell = self.transcript_cells[start].clone();
             let lines = cell
-                .display_hyperlink_lines_for_mode(width, self.chat_widget.history_render_mode());
+                .display_media_layout_for_mode(
+                    width,
+                    self.chat_widget.history_render_mode(),
+                    /*image_placeholder_rows*/ None,
+                )
+                .lines;
             rendered_rows += lines.len();
             cell_displays.push_front(ReflowCellDisplay {
                 lines,
@@ -605,10 +615,13 @@ impl App {
             start -= 1;
             let cell = self.transcript_cells[start].clone();
             cell_displays.push_front(ReflowCellDisplay {
-                lines: cell.display_hyperlink_lines_for_mode(
-                    width,
-                    self.chat_widget.history_render_mode(),
-                ),
+                lines: cell
+                    .display_media_layout_for_mode(
+                        width,
+                        self.chat_widget.history_render_mode(),
+                        /*image_placeholder_rows*/ None,
+                    )
+                    .lines,
                 is_stream_continuation: cell.is_stream_continuation(),
             });
         }

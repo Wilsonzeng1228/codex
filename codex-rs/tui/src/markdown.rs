@@ -26,6 +26,8 @@ use std::path::Path;
 
 use crate::inline_visualization::InlineVisualizationContext;
 use crate::inline_visualization::rewrite_inline_visualizations;
+use crate::media::MediaLayout;
+use crate::media::MediaPlaceholderRows;
 use crate::table_detect;
 use crate::terminal_hyperlinks::HyperlinkLine;
 
@@ -104,6 +106,36 @@ pub(crate) fn render_markdown_agent_with_links_cwd_and_visualizations(
         }
     }
     lines
+}
+
+pub(crate) fn render_markdown_agent_media_layout_with_cwd_and_visualizations(
+    markdown_source: &str,
+    width: usize,
+    cwd: Option<&Path>,
+    inline_visualization_context: Option<&InlineVisualizationContext>,
+    image_placeholder_rows: MediaPlaceholderRows,
+) -> MediaLayout {
+    let rewritten = rewrite_inline_visualizations(markdown_source, inline_visualization_context);
+    let normalized = unwrap_markdown_fences(&rewritten.markdown);
+    let is_hidden_link_destination =
+        |destination: &str| rewritten.trusted_file_links.contains_key(destination);
+    let mut layout = crate::markdown_render::render_markdown_media_layout_with_width_cwd_and_hidden_link_destinations(
+        &normalized,
+        width,
+        cwd,
+        &is_hidden_link_destination,
+        image_placeholder_rows,
+    );
+    for hyperlink in layout
+        .lines
+        .iter_mut()
+        .flat_map(|line| &mut line.hyperlinks)
+    {
+        if let Some(link) = rewritten.trusted_file_links.get(&hyperlink.destination) {
+            hyperlink.retarget_to_trusted_file(&link.destination);
+        }
+    }
+    layout
 }
 
 /// Render an agent message and collect the block metadata needed for incremental rendering.

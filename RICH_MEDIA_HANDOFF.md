@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
 > 更新时间：2026-08-22
-> 当前状态：Phase 1 进行中；已经完成图片语法、来源校验、协议抽象和媒体节点建模，尚未把真实位图显示到聊天消息中。
+> 当前状态：Phase 1 进行中；已经完成图片语法、来源校验、协议抽象、媒体节点建模和布局请求，尚未把真实位图显示到聊天消息中。
 
 ## 新对话启动指令
 
@@ -27,14 +27,15 @@
 - 工作仓库：`D:\hermes\agent-repl\codex-rich`
 - 当前分支：`codex/rich-media`
 - 官方基线：`d44696065723a56b9de6538cd6348fcbe6c1542e`
-- 当前 HEAD：`39b1f619a5`
+- 本轮继续开发前 HEAD：`cb3fa06bdd`
 - 远程仓库只有：`upstream https://github.com/openai/codex.git`
 - 尚无 `origin`：用户还没有提供 fork 地址，不要自行猜测或推送。
 - 父目录的 `D:\hermes\agent-repl\graphify-out` 是未完成的旁路分析产物，没有可查询的 `graph.json`，不属于本仓库，不要加入提交。
 
-最近的实现提交：
+最近的实现提交（不含本轮待提交变更）：
 
 ```text
+cb3fa06bdd docs: 补充富媒体项目阶段性交接
 39b1f619a5 feat: 从助手 Markdown 暴露图片媒体节点
 044ad498ec refactor: 使用强类型媒体 ID 管理图片
 e28946217c refactor: 复用通用 Kitty 图片控制序列
@@ -89,6 +90,14 @@ ef185a27b3 feat: 为 Markdown 图片增加显式文本降级
 - 原始 Markdown 仍作为 raw source 保存；媒体协议字节没有写进 `Line` 或复制内容。
 - App 插入历史记录时已经能读取并记录节点数量。
 
+### 3.5 媒体布局请求
+
+- 新增 `MediaLayout`，统一携带可复制的 `HyperlinkLine` 与终端媒体 placement 请求。
+- 新增非零强类型 `MediaPlaceholderRows` 和 `MediaPlacementRequest { node, rect }`。
+- 对合法、非表格内的 Markdown 图片，可显式预留 N 行，并以 `MediaNode.ordinal` 稳定记录 cell-relative `Rect`。
+- 活跃消息绘制和历史 scrollback/reflow 已切到同一个 `HistoryCell::display_media_layout*` 入口。
+- 当前两个生产入口都显式传入 `None`，因此用户可见行为仍是安全的文本降级；尚未发送 Kitty/Sixel 字节，也没有图片 I/O 或 placement 注册表。
+
 ## 4. 当前架构判断
 
 这是下一阶段最重要的约束：
@@ -114,6 +123,7 @@ ef185a27b3 feat: 为 Markdown 图片增加显式文本降级
 - `codex-rs/tui/src/media/resolver_tests.rs`
 - `codex-rs/tui/src/media/node.rs`
 - `codex-rs/tui/src/media/node_tests.rs`
+- `codex-rs/tui/src/media/layout.rs`
 
 Markdown、历史与布局入口：
 
@@ -125,7 +135,7 @@ Markdown、历史与布局入口：
 - `codex-rs/tui/src/history_cell/tests.rs`
 - `codex-rs/tui/src/app/history_ui.rs`
 - `codex-rs/tui/src/chatwidget/rendering.rs`
-- `codex-rs/tui/src/resize_reflow.rs`
+- `codex-rs/tui/src/app/resize_reflow.rs`
 - `codex-rs/tui/src/tui.rs`
 
 既有图片功能复用点：
@@ -147,13 +157,19 @@ just test -p codex-tui image_protocol                           16/16
 just test -p codex-tui media::image_tests                       1/1
 just test -p codex-tui media::node_tests                        1/1
 助手媒体节点与 raw source 定向测试                              1/1
+just test -p codex-tui media_layout                              2/2
+just test -p codex-tui history_cell::messages::tests            10/10
+just test -p codex-tui chatwidget::rendering::tests               6/6
+just test -p codex-tui app::resize_reflow::tests                  9/9
 ```
 
 验证边界：
 
-- 最终变更后尚未运行完整 `codex-tui` 测试集；以上是权威的定向测试证据。
-- Rust `cargo fmt` 已成功执行，但稳定版会提示 `imports_granularity=Item` 需要 nightly；这不是格式化失败。
+- 本轮布局测试先确认缺少布局类型和接口的 RED，再做最小实现并确认 GREEN。
+- 完整 `just test -p codex-tui` 共运行 3739 项，3737 项通过、2 项失败、10 项跳过；两项失败单独重跑两次仍失败，分别是未修改的项目权限历史测试（断言得到 `../trusted`）和 pets Kitty 本地文件测试（Base64 输出包含 `cG5n`）。它们不在本轮修改路径内，未为消错扩大修改范围。
+- Rust `cargo fmt --all -- --check` 通过，但稳定版会提示 `imports_granularity=Item` 需要 nightly；这不是格式化失败。
 - 完整 `just fmt` 在 Bazel/Starlark 步骤失败，因为 Windows 上找不到/无法下载 `tools/buildifier`，错误为 `[WinError 2]`；不能宣称完整格式检查通过。
+- `cargo insta pending-snapshots -p codex-tui` 无法执行，因为当前环境没有安装 `cargo-insta` 子命令。
 - 一次冗余的 `cargo check -p codex-tui --tests` 因使用另一套缓存、开始重编所有依赖而被手动取消；不要把它记录为代码失败。上述 `just test` 结果才是当前证据。
 
 ## 7. Windows 构建环境
@@ -182,14 +198,16 @@ $env:CARGO_BUILD_JOBS='1'
 
 ## 8. 下一步实施顺序
 
-### 8.1 先建立布局请求，不直接显示图片
+### 8.1 布局请求已建立，下一步接入 capability override
 
-建议新增 `MediaPlacementRequest`（名称可以调整）并先写失败测试，至少覆盖：
+本轮已经通过 RED/GREEN 覆盖：
 
 1. 图片节点能够在给定宽度下保留 N 行占位，并产出可定位的 rect/row；
 2. `MediaNode.ordinal` 能稳定映射到 Markdown 渲染位置；
 3. `raw_lines` 和复制文本只包含原始 Markdown，不含 Kitty/Sixel 控制字节；
 4. 不支持图片协议时继续使用当前文本降级。
+
+下一功能单元应以显式测试 capability override 让生产绘制入口传入非零占位高度，并把 `MediaLayout.placements` 交给统一生命周期所有者；不要在生命周期就绪前直接向终端盲发协议字节。
 
 ### 8.2 建立统一生命周期
 
@@ -221,7 +239,7 @@ $env:CARGO_BUILD_JOBS='1'
 - 尚无本地图片解码、缩放和缓存；
 - 尚无远程 HTTPS 下载器和 DNS 级 SSRF 防护；
 - Sixel 编码仍留在 pets 专用实现，尚未完全移入通用媒体层；
-- 媒体节点尚未记录源字节范围或最终布局行；
+- 媒体节点尚未记录源字节范围；布局请求已有相对行和矩形，但尚未接入真实协议与生命周期注册表；
 - LaTeX 渲染尚未开始；
 - 富媒体交互、配置开关、文档、最终打包尚未开始。
 
@@ -253,7 +271,7 @@ Windows 下 `git status --short` 当前会显示：
 - TUI 测试优先 `just test -p codex-tui <filter>`；
 - 新行为必须先写失败测试，确认 RED 后做最小实现并确认 GREEN；
 - 本轮所有文件完成后统一提交，禁止 `git add .`；
-- 建议下一功能单元提交信息：`feat: 建立聊天媒体布局请求`。
+- 本轮提交信息：`feat: 建立聊天媒体布局请求`。
 
 ## 11. 新对话的起手命令
 
@@ -273,11 +291,11 @@ Get-Content -Raw -Encoding utf8 D:\hermes\agent-repl\总体规划.md
 ```powershell
 Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\chatwidget\rendering.rs
 Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\app\history_ui.rs
-Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\resize_reflow.rs
+Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\app\resize_reflow.rs
 Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\tui.rs
 ```
 
-先定位 active cell 和 history scrollback 的具体坐标归属，再写第一个布局失败测试。
+从 capability override 与 placement 生命周期所有者开始写下一条失败测试，不要重做已经完成的布局请求。
 
 ## 12. Phase 1 完成判据
 

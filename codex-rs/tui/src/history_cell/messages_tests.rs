@@ -20,6 +20,108 @@ fn finalized_markdown_exposes_image_media_nodes_without_changing_raw_source() {
 }
 
 #[test]
+fn finalized_markdown_media_layout_reserves_rows_at_each_image_ordinal() {
+    let source = concat!(
+        "Before\n\n",
+        "![first](https://example.org/first.png)\n\n",
+        "Between\n\n",
+        "![second](file:///D:/course/second.png)\n\n",
+        "After",
+    );
+    let cell = AgentMarkdownCell::new(source.to_string(), Path::new("/tmp"));
+    let placeholder_rows =
+        crate::media::MediaPlaceholderRows::try_from(3).expect("non-zero placeholder height");
+
+    let layout = cell.display_media_layout(/*width*/ 32, Some(placeholder_rows));
+
+    assert_eq!(
+        layout.placements,
+        vec![
+            crate::media::MediaPlacementRequest {
+                node: crate::media::MediaNode::Image {
+                    source: "https://example.org/first.png".to_string(),
+                    alt: "first".to_string(),
+                    ordinal: 0,
+                },
+                rect: Rect::new(
+                    /*x*/ 2, /*y*/ 2, /*width*/ 30, /*height*/ 3
+                ),
+            },
+            crate::media::MediaPlacementRequest {
+                node: crate::media::MediaNode::Image {
+                    source: "file:///D:/course/second.png".to_string(),
+                    alt: "second".to_string(),
+                    ordinal: 1,
+                },
+                rect: Rect::new(
+                    /*x*/ 2, /*y*/ 8, /*width*/ 30, /*height*/ 3
+                ),
+            },
+        ]
+    );
+    assert_eq!(layout.lines.len(), 13);
+    assert_eq!(
+        cell.raw_lines(),
+        vec![
+            Line::from("Before"),
+            Line::default(),
+            Line::from("![first](https://example.org/first.png)"),
+            Line::default(),
+            Line::from("Between"),
+            Line::default(),
+            Line::from("![second](file:///D:/course/second.png)"),
+            Line::default(),
+            Line::from("After"),
+        ]
+    );
+    assert!(
+        layout
+            .lines
+            .iter()
+            .flat_map(|line| &line.line.spans)
+            .all(|span| !span.content.contains('\x1b'))
+    );
+
+    let fallback_layout =
+        cell.display_media_layout(/*width*/ 32, /*image_placeholder_rows*/ None);
+    let fallback_text = visible_lines(fallback_layout.lines)
+        .iter()
+        .map(Line::to_string)
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(fallback_layout.placements.is_empty());
+    assert!(fallback_text.contains("[image: first]"));
+    assert!(fallback_text.contains("[image: second]"));
+}
+
+#[test]
+fn invalid_image_source_keeps_text_fallback_in_media_layout() {
+    let source = "![internal](http://127.0.0.1/private.png)";
+    let cell = AgentMarkdownCell::new(source.to_string(), Path::new("/tmp"));
+    let placeholder_rows =
+        crate::media::MediaPlaceholderRows::try_from(3).expect("non-zero placeholder height");
+
+    let layout = cell.display_media_layout(/*width*/ 48, Some(placeholder_rows));
+    let visible = visible_lines(layout.lines);
+    let visible_text = visible
+        .iter()
+        .map(Line::to_string)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let normalized_visible_text = visible_text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    assert!(layout.placements.is_empty());
+    assert!(normalized_visible_text.contains("[image: internal]"));
+    assert!(
+        normalized_visible_text.contains("[image unavailable:"),
+        "unexpected fallback text: {visible_text:?}"
+    );
+}
+
+#[test]
 fn sanitizer_borrows_clean_text_and_removes_control_sequences() {
     for (text, expected) in [
         ("clean\ttext\n", "clean\ttext\n"),

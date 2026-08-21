@@ -220,6 +220,33 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
         &[]
     }
 
+    /// Returns rich text plus cell-relative image placeholders for a media-capable draw path.
+    ///
+    /// The default preserves the normal text representation and requests no terminal side
+    /// effects. Source-backed cells may override this without changing copying or persistence.
+    fn display_media_layout(
+        &self,
+        width: u16,
+        image_placeholder_rows: Option<crate::media::MediaPlaceholderRows>,
+    ) -> crate::media::MediaLayout {
+        let _ = image_placeholder_rows;
+        crate::media::MediaLayout::text_only(self.display_hyperlink_lines(width))
+    }
+
+    fn display_media_layout_for_mode(
+        &self,
+        width: u16,
+        mode: HistoryRenderMode,
+        image_placeholder_rows: Option<crate::media::MediaPlaceholderRows>,
+    ) -> crate::media::MediaLayout {
+        match mode {
+            HistoryRenderMode::Rich => self.display_media_layout(width, image_placeholder_rows),
+            HistoryRenderMode::Raw => {
+                crate::media::MediaLayout::text_only(plain_hyperlink_lines(self.raw_lines()))
+            }
+        }
+    }
+
     /// Returns the number of viewport rows needed to render this cell.
     ///
     /// The default delegates to `Paragraph::line_count` with
