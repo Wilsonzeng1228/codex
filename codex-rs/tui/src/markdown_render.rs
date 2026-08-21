@@ -362,6 +362,11 @@ struct LinkState {
     local_target_display: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+struct ImageState {
+    destination: String,
+}
+
 fn should_render_link_destination(dest_url: &str) -> bool {
     !is_local_path_like_link(dest_url)
 }
@@ -401,6 +406,7 @@ where
     list_needs_blank_before_next_item: Vec<bool>,
     list_item_start_line_counts: Vec<usize>,
     link: Option<LinkState>,
+    image: Option<ImageState>,
     needs_newline: bool,
     pending_marker_line: bool,
     in_paragraph: bool,
@@ -442,6 +448,7 @@ where
             list_needs_blank_before_next_item: Vec::new(),
             list_item_start_line_counts: Vec::new(),
             link: None,
+            image: None,
             needs_newline: false,
             pending_marker_line: false,
             in_paragraph: false,
@@ -532,14 +539,12 @@ where
             Tag::Strong => self.push_inline_style(self.styles.strong),
             Tag::Strikethrough => self.push_inline_style(self.styles.strikethrough),
             Tag::Link { dest_url, .. } => self.push_link(dest_url.to_string()),
+            Tag::Image { dest_url, .. } => self.start_image(dest_url.to_string()),
             Tag::Table(alignments) => self.start_table(alignments),
             Tag::TableHead => self.start_table_head(),
             Tag::TableRow => self.start_table_row(range),
             Tag::TableCell => self.start_table_cell(),
-            Tag::HtmlBlock
-            | Tag::FootnoteDefinition(_)
-            | Tag::Image { .. }
-            | Tag::MetadataBlock(_) => {}
+            Tag::HtmlBlock | Tag::FootnoteDefinition(_) | Tag::MetadataBlock(_) => {}
         }
     }
 
@@ -563,14 +568,12 @@ where
             }
             TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => self.pop_inline_style(),
             TagEnd::Link => self.pop_link(),
+            TagEnd::Image => self.end_image(),
             TagEnd::Table => self.end_table(),
             TagEnd::TableHead => self.end_table_head(),
             TagEnd::TableRow => self.end_table_row(),
             TagEnd::TableCell => self.end_table_cell(),
-            TagEnd::HtmlBlock
-            | TagEnd::FootnoteDefinition
-            | TagEnd::Image
-            | TagEnd::MetadataBlock(_) => {}
+            TagEnd::HtmlBlock | TagEnd::FootnoteDefinition | TagEnd::MetadataBlock(_) => {}
         }
     }
 
@@ -1792,6 +1795,40 @@ where
 
     fn pop_inline_style(&mut self) {
         self.inline_styles.pop();
+    }
+
+    fn start_image(&mut self, destination: String) {
+        self.image = Some(ImageState { destination });
+        self.push_image_fallback_span("[image: ".into());
+    }
+
+    fn end_image(&mut self) {
+        let Some(image) = self.image.take() else {
+            return;
+        };
+
+        self.push_image_fallback_span("] (".into());
+        let span = Span::styled(image.destination.clone(), self.styles.link);
+        let mut destination = HyperlinkLine::new(Line::default());
+        destination.push_span(span, web_destination(&image.destination).as_deref());
+        if self.in_table_cell() {
+            if let Some(table_state) = self.table_state.as_mut()
+                && let Some(cell) = table_state.current_cell.as_mut()
+            {
+                cell.push_annotated(destination);
+            }
+        } else {
+            self.push_annotated(destination);
+        }
+        self.push_image_fallback_span(")".into());
+    }
+
+    fn push_image_fallback_span(&mut self, span: Span<'static>) {
+        if self.in_table_cell() {
+            self.push_span_to_table_cell(span);
+        } else {
+            self.push_span(span);
+        }
     }
 
     fn push_link(&mut self, dest_url: String) {

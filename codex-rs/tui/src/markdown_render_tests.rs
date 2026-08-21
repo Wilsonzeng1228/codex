@@ -32,6 +32,20 @@ fn plain_lines(text: &Text<'_>) -> Vec<String> {
 }
 
 #[test]
+fn markdown_image_fallback_includes_alt_and_source() {
+    let text = render_markdown_text(
+        "Remote ![system diagram](https://example.com/diagram.png) and local ![scope](D:/lab/scope.png).",
+    );
+
+    assert_eq!(
+        plain_lines(&text),
+        vec![
+            "Remote [image: system diagram] (https://example.com/diagram.png) and local [image: scope] (D:/lab/scope.png)."
+        ]
+    );
+}
+
+#[test]
 fn bare_url_with_tilde_keeps_complete_hyperlink() {
     let destination =
         "https://www.cs.tufts.edu/~nr/cs257/archive/olin-shivers/dissertation.pdf";
