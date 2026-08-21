@@ -1,11 +1,17 @@
+mod image;
 mod protocol;
 mod resolver;
 
+#[cfg(test)]
+mod image_tests;
 #[cfg(test)]
 mod protocol_tests;
 #[cfg(test)]
 mod resolver_tests;
 
+pub(crate) use image::kitty_delete_image;
+pub(crate) use image::kitty_transmit_png_file_with_id;
+pub(crate) use image::kitty_transmit_png_with_id;
 pub(crate) use protocol::ImageProtocol;
 pub(crate) use protocol::ImageSupport;
 pub(crate) use protocol::ImageUnsupportedReason;
