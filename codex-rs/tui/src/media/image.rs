@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::num::NonZeroU32;
 use std::path::Path;
 
 use anyhow::Context;
@@ -11,7 +12,24 @@ const ESC: &str = "\x1b";
 const ST: &str = "\x1b\\";
 const KITTY_CHUNK_SIZE: usize = 4096;
 
-pub(crate) fn kitty_delete_image(image_id: u32) -> String {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct MediaId(NonZeroU32);
+
+impl MediaId {
+    pub(crate) const fn new(value: u32) -> Option<Self> {
+        match NonZeroU32::new(value) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+
+    pub(crate) const fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+pub(crate) fn kitty_delete_image(image_id: MediaId) -> String {
+    let image_id = image_id.get();
     wrap_for_tmux_if_needed(&format!("{ESC}_Ga=d,d=I,i={image_id},q=2;{ST}"))
 }
 
@@ -19,7 +37,7 @@ pub(crate) fn kitty_transmit_png_with_id(
     path: &Path,
     columns: u16,
     rows: u16,
-    image_id: Option<u32>,
+    image_id: Option<MediaId>,
 ) -> Result<String> {
     let png = fs::read(path).with_context(|| format!("read {}", path.display()))?;
     let payload = general_purpose::STANDARD.encode(png);
@@ -50,7 +68,7 @@ pub(crate) fn kitty_transmit_png_file_with_id(
     path: &Path,
     columns: u16,
     rows: u16,
-    image_id: Option<u32>,
+    image_id: Option<MediaId>,
 ) -> Result<String> {
     let path = path
         .canonicalize()
@@ -62,9 +80,9 @@ pub(crate) fn kitty_transmit_png_file_with_id(
     Ok(wrap_for_tmux_if_needed(&command))
 }
 
-fn kitty_image_id_arg(image_id: Option<u32>) -> String {
+fn kitty_image_id_arg(image_id: Option<MediaId>) -> String {
     image_id
-        .map(|image_id| format!(",i={image_id}"))
+        .map(|image_id| format!(",i={}", image_id.get()))
         .unwrap_or_default()
 }
 

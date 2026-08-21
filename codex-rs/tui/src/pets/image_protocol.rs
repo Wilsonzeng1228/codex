@@ -23,6 +23,7 @@ use image::imageops::FilterType;
 pub(crate) use crate::media::ImageProtocol;
 use crate::media::ImageSupport;
 use crate::media::ImageUnsupportedReason;
+pub(crate) use crate::media::MediaId;
 pub(crate) use crate::media::kitty_delete_image;
 pub(crate) use crate::media::kitty_transmit_png_file_with_id;
 pub(crate) use crate::media::kitty_transmit_png_with_id;
@@ -211,7 +212,7 @@ mod tests {
     fn tmux_passthrough_wraps_and_escapes_control_sequence() {
         let _guard = EnvVarGuard::new("TMUX", Some("session"));
         assert_eq!(
-            kitty_delete_image(23),
+            kitty_delete_image(MediaId::new(23).unwrap()),
             "\x1bPtmux;\x1b\x1b_Ga=d,d=I,i=23,q=2;\x1b\x1b\\\x1b\\"
         );
     }
@@ -540,7 +541,7 @@ mod tests {
             &path,
             /*columns*/ 4,
             /*rows*/ 3,
-            /*image_id*/ Some(7),
+            /*image_id*/ Some(MediaId::new(7).unwrap()),
         )
         .unwrap();
         let path = path.canonicalize().unwrap();

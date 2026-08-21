@@ -4,6 +4,7 @@ use std::fs;
 
 use serial_test::serial;
 
+use super::MediaId;
 use super::kitty_delete_image;
 use super::kitty_transmit_png_with_id;
 
@@ -37,9 +38,15 @@ fn kitty_commands_are_scoped_to_the_supplied_media_id() {
     let path = dir.path().join("image.png");
     fs::write(&path, b"png").unwrap();
 
+    let media_id = MediaId::new(23).expect("non-zero media id");
     let transmit =
-        kitty_transmit_png_with_id(&path, /*columns*/ 10, /*rows*/ 4, Some(23)).unwrap();
+        kitty_transmit_png_with_id(&path, /*columns*/ 10, /*rows*/ 4, Some(media_id)).unwrap();
 
     assert!(transmit.contains("c=10,r=4,q=2,i=23,m=0;"));
-    assert_eq!(kitty_delete_image(23), "\x1b_Ga=d,d=I,i=23,q=2;\x1b\\");
+    assert_eq!(
+        kitty_delete_image(media_id),
+        "\x1b_Ga=d,d=I,i=23,q=2;\x1b\\"
+    );
+    assert_eq!(media_id.get(), 23);
+    assert_eq!(MediaId::new(0), None);
 }

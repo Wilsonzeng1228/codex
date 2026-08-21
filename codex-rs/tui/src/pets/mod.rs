@@ -127,7 +127,12 @@ pub(crate) fn render_ambient_pet_image(
     state: &mut PetImageRenderState,
     request: Option<AmbientPetDraw>,
 ) -> std::result::Result<(), PetImageRenderError> {
-    render_pet_image(writer, state, /*image_id*/ 0xC0DE, request)
+    render_pet_image(
+        writer,
+        state,
+        /*image_id*/ image_protocol::MediaId::new(0xC0DE).expect("non-zero pet image id"),
+        request,
+    )
 }
 
 pub(crate) fn render_pet_picker_preview_image(
@@ -135,7 +140,12 @@ pub(crate) fn render_pet_picker_preview_image(
     state: &mut PetImageRenderState,
     request: Option<AmbientPetDraw>,
 ) -> std::result::Result<(), PetImageRenderError> {
-    render_pet_image(writer, state, /*image_id*/ 0xC0DF, request)
+    render_pet_image(
+        writer,
+        state,
+        /*image_id*/ image_protocol::MediaId::new(0xC0DF).expect("non-zero pet image id"),
+        request,
+    )
 }
 
 #[derive(Debug, Default)]
@@ -147,7 +157,7 @@ pub(crate) struct PetImageRenderState {
 fn render_pet_image(
     writer: &mut impl Write,
     state: &mut PetImageRenderState,
-    image_id: u32,
+    image_id: image_protocol::MediaId,
     request: Option<AmbientPetDraw>,
 ) -> std::result::Result<(), PetImageRenderError> {
     use crossterm::cursor::MoveTo;
