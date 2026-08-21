@@ -446,6 +446,7 @@ impl HistoryCell for AgentMessageCell {
 #[derive(Debug)]
 pub(crate) struct AgentMarkdownCell {
     markdown_source: String,
+    media_nodes: Vec<crate::media::MediaNode>,
     cwd: PathBuf,
     inline_visualization_context: Option<crate::inline_visualization::InlineVisualizationContext>,
     rendered_lines: Option<MarkdownRenderCache>,
@@ -473,11 +474,13 @@ impl AgentMarkdownCell {
             crate::inline_visualization::InlineVisualizationContext,
         >,
     ) -> Self {
+        let media_nodes = crate::media::extract_media_nodes(&markdown_source);
         let rendered_lines =
             (!crate::inline_visualization::contains_inline_visualization(&markdown_source))
                 .then(MarkdownRenderCache::default);
         Self {
             markdown_source,
+            media_nodes,
             cwd: cwd.to_path_buf(),
             inline_visualization_context,
             rendered_lines,
@@ -545,6 +548,10 @@ impl HistoryCell for AgentMarkdownCell {
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
         raw_lines_from_source(&self.markdown_source)
+    }
+
+    fn media_nodes(&self) -> &[crate::media::MediaNode] {
+        &self.media_nodes
     }
 
     fn has_stable_transcript_height(&self) -> bool {

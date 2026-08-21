@@ -212,6 +212,14 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
         }
     }
 
+    /// Returns structured rich-media references derived from the raw cell source.
+    ///
+    /// These nodes never contain terminal protocol bytes and are not used for copying or
+    /// persistence. The draw layer may use them to schedule media overlays for visible cells.
+    fn media_nodes(&self) -> &[crate::media::MediaNode] {
+        &[]
+    }
+
     /// Returns the number of viewport rows needed to render this cell.
     ///
     /// The default delegates to `Paragraph::line_count` with

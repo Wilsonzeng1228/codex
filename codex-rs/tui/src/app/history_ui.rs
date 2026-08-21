@@ -22,6 +22,10 @@ pub(super) struct ThreadUsageStatusHistory {
 
 impl App {
     pub(super) fn insert_history_cell(&mut self, tui: &mut tui::Tui, cell: Box<dyn HistoryCell>) {
+        let media_node_count = cell.media_nodes().len();
+        if media_node_count > 0 {
+            tracing::debug!(media_node_count, "history cell contains rich-media nodes");
+        }
         let cell: Arc<dyn HistoryCell> = cell.into();
         if let Some(Overlay::Transcript(t)) = &mut self.overlay {
             t.insert_cell(cell.clone());

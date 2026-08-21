@@ -4,6 +4,22 @@ use assert_matches::assert_matches;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn finalized_markdown_exposes_image_media_nodes_without_changing_raw_source() {
+    let source = "Before ![system *diagram*](D:/course/diagram.png) after.";
+    let cell = AgentMarkdownCell::new(source.to_string(), Path::new("/tmp"));
+
+    assert_eq!(
+        cell.media_nodes(),
+        &[crate::media::MediaNode::Image {
+            source: "D:/course/diagram.png".to_string(),
+            alt: "system diagram".to_string(),
+            ordinal: 0,
+        }]
+    );
+    assert_eq!(cell.raw_lines(), vec![Line::from(source)]);
+}
+
+#[test]
 fn sanitizer_borrows_clean_text_and_removes_control_sequences() {
     for (text, expected) in [
         ("clean\ttext\n", "clean\ttext\n"),
