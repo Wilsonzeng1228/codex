@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
 > 更新时间：2026-08-23
-> 当前状态：Phase 1 核心路径已通过 Windows WezTerm 真实 smoke。Windows 版 WezTerm 使用显式 `iterm2` override 后，静态本地 PNG 能在 finalized assistant history 中显示；滚动、窗口宽高调整、重复 reflow 和退出后重启均未观察到幽灵图片。空 override 已真实确认回到纯文本降级且不生成 placement。任务切换/消息移除仍缺一轮专门的人工视觉操作，因此继续保持 Phase 1“进行中”，不扩大到网络下载、缓存、Sixel 或 LaTeX。
+> 当前状态：Phase 1 已完成。Windows 版 WezTerm 使用显式 `iterm2` override 后，静态本地 PNG 能在 finalized assistant history 中显示；滚动、窗口宽高调整、重复 reflow、真实 `/resume` 任务切换、空闲 `/clear` 消息清理和退出后重启均未观察到幽灵图片。空 override 已真实确认回到纯文本降级且不生成 placement。本轮不扩大到网络下载、缓存、Sixel 或 LaTeX。
 
 ## 新对话启动指令
 
@@ -128,7 +128,7 @@ ef185a27b3 feat: 为 Markdown 图片增加显式文本降级
 - 活跃消息和已提交历史现在共享布局语义与 `Tui` 生命周期注册表，但终端坐标锚定仍未得到真实终端证明；
 - Kitty 控制序列只能作为终端副作用发送，禁止写入原始 Markdown、复制文本或持久化 `Line`。
 
-当前基础设施采用双路径：active 使用当前 frame 绝对坐标，history 在其保留行进入 terminal scrollback 的同一时刻发送 placement。Windows WezTerm 的 finalized history 路径已通过真实滚动与 resize 验收，direct iTerm2 inline placement 能随 scrollback 移动。active 布局和 retirement 有自动测试，但 active streaming 瞬间、任务切换和消息移除尚未分别做专门人工截图；在这些场景完成前，不应把 Phase 1 的全部视觉判据写成无保留完成。
+当前基础设施采用双路径：active 使用当前 frame 绝对坐标，history 在其保留行进入 terminal scrollback 的同一时刻发送 placement。Windows WezTerm 的 finalized history 路径已通过真实滚动与 resize 验收，direct iTerm2 inline placement 能随 scrollback 移动。真实 `/resume` 从含图片任务切到纯文本任务后，旧图片不再显示；空闲 `/clear` 会 retirement 全部 history placement 并清空终端。active 布局和 retirement 有自动测试，active streaming 瞬间仍没有单独截图，但 Phase 1 规定的真实终端生命周期判据已全部关闭。
 
 ## 5. 关键文件
 
@@ -239,6 +239,15 @@ just test -p codex-tui finalized_markdown_media_layout_reserves_rows_at_each_ima
 - `just fix -p codex-tui` 退出码 0；`just fmt` 仍因 Windows 缺少 `tools/buildifier` 报 `[WinError 2]`，随后 `cargo fmt --all -- --check` 退出码 0。
 - 视觉证据与日志保存在仓库外 `C:\Users\Wilsonzeng\.codex\artifacts\rich-media-smoke`，不会进入本仓库提交。
 
+2026-08-23 Phase 1 生命周期专项视觉验收：
+
+- 使用 WezTerm `20240203-110809-5046fc22`、`CODEX_TUI_MEDIA_CAPABILITY_OVERRIDE=iterm2` 和占位 4 行，在真实 pane 中完成任务切换与消息清理专项操作。
+- `/new` 会按产品语义把旧任务内容留在同一 terminal scrollback，旧图随旧内容保留，因此不把 `/new` 当作“清空旧任务”的验收路径。
+- 最终使用 `/resume <UUID>` 从含图片任务切到已持久化的纯文本任务；截图确认新任务可见区中旧 iTerm2 图片消失，没有残影。切换前后证据为 `20-image-task-before-successful-switch.png` 和 `21-after-successful-resume-to-text-task.png`。
+- 空闲状态执行 `/clear` 后，截图 `14-after-successful-clear-retirement.png` 中旧图片完全消失；runtime log 明确记录 `requested=0 retired=3 placed=0 skipped=0`。一次任务未结束时的 `/clear` 被 TUI 正确拒绝，不计入最终验收。
+- 正常 `/exit` 时 runtime log 另记录 `requested=0 retired=2 placed=0 skipped=0`，专项 WezTerm/Codex 进程已退出。
+- 有效截图、pane 环境记录和 runtime log 位于仓库外 `C:\Users\Wilsonzeng\.codex\artifacts\rich-media-smoke\2026-08-23\phase1-lifecycle-rerun`。
+
 ## 7. Windows 构建环境
 
 全局代理指向失效的 `127.0.0.1:7892`。所有需要 Cargo/just 网络访问的命令应只在当前 PowerShell 会话设置以下覆盖，不要修改用户的全局 Git 或代理配置：
@@ -285,7 +294,7 @@ $env:CARGO_INCREMENTAL='0'
 - history writer 在保留行进入 scrollback 时发送，只使用列定位；
 - scoped reflow 保留未参与本次重建的旧 scrollback placement。
 
-Windows WezTerm 核心 smoke 已完成：finalized history 图片、滚动、resize/reflow、退出 retirement 和无 override 文本降级均通过。下一步若继续收口 Phase 1，只需专门补做任务切换/消息移除的人工视觉操作，并保存截图或日志；不要重复已经通过的核心 smoke，也不要在这一缺口关闭前扩大到网络下载、缓存、Sixel 或 LaTeX。
+Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、resize/reflow、真实 `/resume` 任务切换、空闲 `/clear` retirement、退出 retirement 和无 override 文本降级均通过。后续可以按总体规划进入 Phase 2，但新对话仍应先确认范围和资源预算，不要把网络下载、缓存、Sixel 或 LaTeX 混入本轮生命周期验收提交。
 
 ### 8.3 再进入异步 I/O
 
@@ -301,7 +310,6 @@ Windows WezTerm 核心 smoke 已完成：finalized history 图片、滚动、res
 
 ## 9. 尚未完成
 
-- 聊天区的 Windows WezTerm iTerm2 inline 静态本地 PNG 核心视觉验收已通过；任务切换/消息移除仍缺专门人工操作记录；
 - active streaming 瞬间没有单独截图，当前可靠证据集中在 finalized history、滚动、resize/reflow、退出 retirement 与文本降级；
 - 尚无本地图片解码、缩放和缓存；
 - 尚无远程 HTTPS 下载器和 DNS 级 SSRF 防护；
@@ -315,7 +323,7 @@ Windows WezTerm 核心 smoke 已完成：finalized history 图片、滚动、res
 | 阶段 | 状态 |
 |---|---|
 | Phase 0：基线与架构勘察 | 已完成 |
-| Phase 1：图片语法、协议、节点与布局 | 进行中（Windows WezTerm 核心 smoke 已通过） |
+| Phase 1：图片语法、协议、节点与布局 | 已完成 |
 | Phase 2：本地/远程图片 I/O 与缓存 | 待开始（仅来源解析已提前完成） |
 | Phase 3：LaTeX | 待开始 |
 | Phase 4：交互与配置 | 待开始 |
@@ -338,7 +346,7 @@ Windows 下 `git status --short` 当前会显示：
 - TUI 测试优先 `just test -p codex-tui <filter>`；
 - 新行为必须先写失败测试，确认 RED 后做最小实现并确认 GREEN；
 - 本轮所有文件完成后统一提交，禁止 `git add .`；
-- 本轮建议提交信息：`feat: 支持 Windows WezTerm 聊天图片`。
+- 本轮建议提交信息：`docs: 完成 Phase 1 生命周期视觉验收`。
 
 ## 11. 新对话的起手命令
 
@@ -362,7 +370,7 @@ Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\app\resize_reflow.rs
 Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\tui.rs
 ```
 
-不要重做已经通过的 Windows WezTerm 核心 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定或 finalized consolidation reflow。若继续 Phase 1，优先专门验证任务切换/消息移除；若该场景失败，先记录 iTerm2 inline placement 的具体生命周期缺口，再决定最小修复。
+不要重做已经通过的 Windows WezTerm 核心 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、真实 `/resume` 任务切换或空闲 `/clear` retirement。下一轮若进入 Phase 2，先重新确认范围、磁盘红线和异步 I/O 安全边界。
 
 ## 12. Phase 1 完成判据
 
@@ -371,7 +379,7 @@ Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\tui.rs
 - [x] 静态本地 PNG 在真实 WezTerm 的 finalized 助手消息位置显示；
 - [x] 文本宽度变化与 resize/reflow 后未观察到位置残影；
 - [x] redraw/reflow、滚动和退出后重启未遗留幽灵图片；
-- [ ] 任务切换或消息移除仍需一轮专门视觉记录；
+- [x] 真实 `/resume` 任务切换和空闲 `/clear` 消息移除已有专门视觉记录；
 - [x] 不支持协议时文本降级正常且日志中没有 placement/write；
 - [x] raw Markdown、复制内容和持久化 `Line` 不含终端协议字节；
 - [x] 相关定向测试通过，完整 `codex-tui` 测试集只保留两项既有基线失败；
