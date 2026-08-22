@@ -187,6 +187,10 @@ fn render_pet_image(
     state.last_protocol = Some(request.protocol);
 
     let payload = match request.protocol {
+        ImageProtocol::Iterm2Inline => AmbientPetPayload::Text(
+            image_protocol::iterm2_transmit_png(&request.frame, request.columns, request.rows)
+                .map_err(PetImageRenderError::Asset)?,
+        ),
         ImageProtocol::Kitty => AmbientPetPayload::Text(
             image_protocol::kitty_transmit_png_with_id(
                 &request.frame,

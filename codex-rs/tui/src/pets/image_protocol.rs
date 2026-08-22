@@ -24,6 +24,7 @@ pub(crate) use crate::media::ImageProtocol;
 use crate::media::ImageSupport;
 use crate::media::ImageUnsupportedReason;
 pub(crate) use crate::media::MediaId;
+pub(crate) use crate::media::iterm2_transmit_png;
 pub(crate) use crate::media::kitty_delete_image;
 pub(crate) use crate::media::kitty_transmit_png_file_with_id;
 pub(crate) use crate::media::kitty_transmit_png_with_id;
@@ -121,6 +122,9 @@ fn pet_image_support_for_terminal(info: &TerminalInfo) -> PetImageSupport {
 
 fn pet_image_support(support: ImageSupport) -> PetImageSupport {
     match support {
+        ImageSupport::Supported(ImageProtocol::Iterm2Inline) => {
+            PetImageSupport::Unsupported(PetImageUnsupportedReason::Terminal)
+        }
         ImageSupport::Supported(protocol) => PetImageSupport::Supported(protocol),
         ImageSupport::Unsupported(reason) => PetImageSupport::Unsupported(match reason {
             ImageUnsupportedReason::Tmux => PetImageUnsupportedReason::Tmux,
@@ -365,16 +369,32 @@ mod tests {
                 /*term*/ None,
             ),
             terminal_info_for_test(
-                TerminalName::WezTerm,
-                /*multiplexer*/ None,
-                Some("WezTerm"),
-                /*term*/ None,
-            ),
-            terminal_info_for_test(
                 TerminalName::Unknown,
                 /*multiplexer*/ None,
                 /*term_program*/ None,
                 Some("xterm-kitty"),
+            ),
+        ] {
+            assert_eq!(
+                pet_image_support_for_terminal(&info),
+                PetImageSupport::Supported(ImageProtocol::Kitty)
+            );
+        }
+    }
+
+    #[test]
+    fn pet_image_support_uses_windows_safe_wezterm_protocol() {
+        let expected = if cfg!(windows) {
+            PetImageSupport::Unsupported(PetImageUnsupportedReason::Terminal)
+        } else {
+            PetImageSupport::Supported(ImageProtocol::Kitty)
+        };
+        for info in [
+            terminal_info_for_test(
+                TerminalName::WezTerm,
+                /*multiplexer*/ None,
+                Some("WezTerm"),
+                /*term*/ None,
             ),
             terminal_info_for_test(
                 TerminalName::Unknown,
@@ -389,10 +409,7 @@ mod tests {
                 Some("xterm-256color"),
             ),
         ] {
-            assert_eq!(
-                pet_image_support_for_terminal(&info),
-                PetImageSupport::Supported(ImageProtocol::Kitty)
-            );
+            assert_eq!(pet_image_support_for_terminal(&info), expected);
         }
     }
 
@@ -433,7 +450,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn wezterm_env_uses_kitty_graphics_for_ambient_pets() {
+    fn wezterm_env_uses_platform_safe_graphics_for_ambient_pets() {
         let _tmux = EnvVarGuard::new("TMUX", /*value*/ None);
         let _tmux_pane = EnvVarGuard::new("TMUX_PANE", /*value*/ None);
         let _zellij = EnvVarGuard::new("ZELLIJ", /*value*/ None);
@@ -445,7 +462,19 @@ mod tests {
 
         assert_eq!(
             detect_pet_image_support(),
-            PetImageSupport::Supported(ImageProtocol::Kitty)
+            if cfg!(windows) {
+                PetImageSupport::Unsupported(PetImageUnsupportedReason::Terminal)
+            } else {
+                PetImageSupport::Supported(ImageProtocol::Kitty)
+            }
+        );
+    }
+
+    #[test]
+    fn iterm2_inline_is_rejected_for_animated_pets_without_delete_semantics() {
+        assert_eq!(
+            pet_image_support(ImageSupport::Supported(ImageProtocol::Iterm2Inline)),
+            PetImageSupport::Unsupported(PetImageUnsupportedReason::Terminal)
         );
     }
 

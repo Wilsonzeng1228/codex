@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
-> 更新时间：2026-08-22
-> 当前状态：Phase 1 进行中；已经完成图片语法、来源校验、协议抽象、媒体节点、稳定 placement 生命周期、可注入终端 writer 和显式生产 capability override。静态本地 PNG 已能进入 Kitty 写入路径，但尚未在真实 WezTerm 中完成视觉验收，因此不能宣称聊天图片显示完成。
+> 更新时间：2026-08-23
+> 当前状态：Phase 1 核心路径已通过 Windows WezTerm 真实 smoke。Windows 版 WezTerm 使用显式 `iterm2` override 后，静态本地 PNG 能在 finalized assistant history 中显示；滚动、窗口宽高调整、重复 reflow 和退出后重启均未观察到幽灵图片。空 override 已真实确认回到纯文本降级且不生成 placement。任务切换/消息移除仍缺一轮专门的人工视觉操作，因此继续保持 Phase 1“进行中”，不扩大到网络下载、缓存、Sixel 或 LaTeX。
 
 ## 新对话启动指令
 
@@ -27,7 +27,7 @@
 - 工作仓库：`D:\hermes\agent-repl\codex-rich`
 - 当前分支：`codex/rich-media`
 - 官方基线：`d44696065723a56b9de6538cd6348fcbe6c1542e`
-- 本轮继续开发前 HEAD：`5d44dd8034 feat: 建立聊天媒体布局请求`
+- 本轮继续开发前 HEAD：`0185077629697c1743d14690d434fc6be8e1495e feat: 锚定聊天媒体到终端历史`
 - 远程仓库只有：`upstream https://github.com/openai/codex.git`
 - 尚无 `origin`：用户还没有提供 fork 地址，不要自行猜测或推送。
 - 父目录的 `D:\hermes\agent-repl\graphify-out` 是未完成的旁路分析产物，没有可查询的 `graph.json`，不属于本仓库，不要加入提交。
@@ -35,6 +35,7 @@
 最近的实现提交（不含本轮待提交变更）：
 
 ```text
+0185077629 feat: 锚定聊天媒体到终端历史
 5d44dd8034 feat: 建立聊天媒体布局请求
 cb3fa06bdd docs: 补充富媒体项目阶段性交接
 39b1f619a5 feat: 从助手 Markdown 暴露图片媒体节点
@@ -73,14 +74,17 @@ ef185a27b3 feat: 为 Markdown 图片增加显式文本降级
 
 注意：resolver 目前只做纯解析，不访问文件和网络。它还没有 DNS 解析后的私网复检，因此远程下载器不能直接把“语法校验通过”等同于“SSRF 防护完成”。
 
-### 3.3 终端协议与 Kitty 控制序列
+### 3.3 终端协议与控制序列
 
 - 通用终端图片协议探测已抽到 `media/protocol.rs`。
-- 当前协议类型覆盖 `Kitty`、`KittyLocalFile`、`Sixel`，并保留 tmux/Zellij 安全判断。
+- 当前协议类型覆盖 `Iterm2Inline`、`Kitty`、`KittyLocalFile`、`Sixel`，并保留 tmux/Zellij 安全判断。
+- 实测 Windows WezTerm 的 Kitty APC 不工作；Windows WezTerm 改用 iTerm2 OSC 1337 inline，使用 `ESC \\` 结束且允许协议移动光标，再由 writer 保存/恢复终端光标。
+- Windows WezTerm 的聊天图片显式 override 为 `CODEX_TUI_MEDIA_CAPABILITY_OVERRIDE=iterm2`；非 Windows WezTerm 仍选择 Kitty。
 - pets 功能已经改为复用通用探测结果。
+- iTerm2 inline 没有本项目可用的 Kitty image-ID 删除语义，动画 pets 会被写入 scrollback 并形成残影。因此 Windows WezTerm 上 pets 明确拒绝 `Iterm2Inline`，保持不显示；聊天静态图片仍可使用该协议。
 - Kitty PNG 发送与删除控制序列已经抽到 `media/image.rs`。
 - 图片 ID 已改为强类型、非零的 `MediaId`。
-- iTerm2 行为仍是既有实现，并未作为本阶段的新目标。
+- iTerm2 chat writer 只处理通过 8 字节 PNG signature 校验的静态本地文件；未扩展公网下载或其他格式。
 
 ### 3.4 媒体节点建模
 
@@ -108,10 +112,11 @@ ef185a27b3 feat: 为 Markdown 图片增加显式文本降级
 - history 插入、初始 replay 和 resize/reflow 会携带 `MediaLayout.placements`，并同步处理 cell 分隔行、前端裁剪和历史提示行造成的 Y 偏移。
 - active placement 通过可注入 writer 使用 frame 绝对 `Rect`；history placement 在对应保留行写入 terminal scrollback 时只移动列并立即发送，避免把历史图片绑定到易变化的屏幕绝对 Y。
 - `MediaPlacementUpdate` 已接到现有 `kitty_transmit_png_*` 和 `kitty_delete_image` 抽象；删除先于重放，redraw、resize/reflow、历史清理和 TUI drop 都有明确 retirement 路径。
-- 生产环境可显式设置 `CODEX_TUI_MEDIA_CAPABILITY_OVERRIDE=kitty`；占位行由 `CODEX_TUI_MEDIA_PLACEHOLDER_ROWS` 指定，合法范围 1–32，默认 4。未显式启用时仍为 `None`，不会发送聊天媒体协议字节。
+- 生产环境可显式设置 `CODEX_TUI_MEDIA_CAPABILITY_OVERRIDE=kitty` 或 `iterm2`；Windows WezTerm 实测必须使用 `iterm2`。占位行由 `CODEX_TUI_MEDIA_PLACEHOLDER_ROWS` 指定，合法范围 1–32，默认 4。未显式启用时仍为 `None`，不会发送聊天媒体协议字节。
 - writer 当前只接受本地来源且要求 8 字节 PNG magic；HTTPS、拒绝来源和伪 PNG 均继续文本降级。协议字节只写入终端 sink，不进入 Ratatui `Line`、raw Markdown、复制文本或持久化 transcript。
 - 注册表的更新结果显式给出 `retired` 与 `added` MediaId，为后续复用 Kitty 删除/发送接口提供边界。
-- 状态模型和终端副作用层已经接通，但真实终端的滚动、回流和 terminal-specific Kitty 行为尚未视觉验收。
+- 流式 assistant cell 会先写入文本 fallback；final consolidation 若发现媒体节点且 capability 开启，会强制一次 source-backed reflow，使图片占位和 placement 真正进入 history。该缺口已用 `0` placement 的 RED 和 `1` placement 的 GREEN 覆盖。
+- Windows WezTerm 真实日志已证明初次 history placement、三次 resize/reflow 重建和退出 retirement；用户确认图片显示并且上下滚动、调整窗口后无残影。
 
 ## 4. 当前架构判断
 
@@ -123,7 +128,7 @@ ef185a27b3 feat: 为 Markdown 图片增加显式文本降级
 - 活跃消息和已提交历史现在共享布局语义与 `Tui` 生命周期注册表，但终端坐标锚定仍未得到真实终端证明；
 - Kitty 控制序列只能作为终端副作用发送，禁止写入原始 Markdown、复制文本或持久化 `Line`。
 
-当前基础设施采用双路径：active 使用当前 frame 绝对坐标，history 在其保留行进入 terminal scrollback 的同一时刻发送 placement。单元测试证明 history 路径不使用绝对屏幕 Y，scoped reflow 也不会删除更老 placement；但这些只能降低架构风险，仍不能替代真实 WezTerm 的滚动与 resize 验收。若真实终端无法让 direct placement 随 scrollback 可靠移动，应评估 Kitty Unicode placeholders，或调整为由 alternate screen 统一绘制可见 transcript。
+当前基础设施采用双路径：active 使用当前 frame 绝对坐标，history 在其保留行进入 terminal scrollback 的同一时刻发送 placement。Windows WezTerm 的 finalized history 路径已通过真实滚动与 resize 验收，direct iTerm2 inline placement 能随 scrollback 移动。active 布局和 retirement 有自动测试，但 active streaming 瞬间、任务切换和消息移除尚未分别做专门人工截图；在这些场景完成前，不应把 Phase 1 的全部视觉判据写成无保留完成。
 
 ## 5. 关键文件
 
@@ -222,6 +227,18 @@ just test -p codex-tui finalized_markdown_media_layout_reserves_rows_at_each_ima
 - `cargo insta pending-snapshots -p codex-tui` 无法执行，因为当前环境没有安装 `cargo-insta` 子命令。
 - 一次冗余的 `cargo check -p codex-tui --tests` 因使用另一套缓存、开始重编所有依赖而被手动取消；不要把它记录为代码失败。上述 `just test` 结果才是当前证据。
 
+2026-08-23 Windows WezTerm 实测与本轮 TDD 证据：
+
+- 原始 WezTerm `imgcat` 能显示测试 PNG；原始 Kitty APC 在 Windows WezTerm 无输出；iTerm2 OSC 1337 只有使用 `ESC \\` 终止且允许协议移动光标时能稳定显示，writer 随后恢复终端光标。
+- 聊天图片使用 `CODEX_TUI_MEDIA_CAPABILITY_OVERRIDE=iterm2`、占位 4 行后，仓库静态 PNG 能在 finalized assistant history 中显示。用户完成上下滚动和窗口宽高调整后确认没有残影。
+- 运行日志记录了 1 次初始 history placement、3 次 resize/reflow 重建和退出时 1 次 retirement；协议字节只进入可注入 terminal writer，不进入 Markdown、复制文本或持久化 `Line`。
+- 清空 capability override 后，同一 Markdown 图片恢复为 `[image: OpenAI local smoke] (...)` 文本降级；日志中 `protocol=None` 且没有 placement/write 记录。用户确认富媒体与文本降级两项结果都正确。
+- animated pets 明确拒绝 `Iterm2Inline`，因为该协议没有本项目可用的 image-ID 删除语义；Windows WezTerm 上 pets 不显示是安全行为，避免把动画帧写入 scrollback 形成残影。
+- agent message consolidation 新增失败测试先得到 placement 计数 `0`（期望 `1`），随后仅在 finalized source 含媒体且 capability 已启用时把 reflow 升级为 `Required`，定向测试转为 GREEN。
+- 本轮完整 `just test -p codex-tui` 共运行 3757 项，3755 项通过、2 项失败、10 项跳过；失败仍是同两项既有基线失败：项目权限历史得到 `../trusted`，以及 pets Kitty 本地文件输出包含 `cG5n`。
+- `just fix -p codex-tui` 退出码 0；`just fmt` 仍因 Windows 缺少 `tools/buildifier` 报 `[WinError 2]`，随后 `cargo fmt --all -- --check` 退出码 0。
+- 视觉证据与日志保存在仓库外 `C:\Users\Wilsonzeng\.codex\artifacts\rich-media-smoke`，不会进入本仓库提交。
+
 ## 7. Windows 构建环境
 
 全局代理指向失效的 `127.0.0.1:7892`。所有需要 Cargo/just 网络访问的命令应只在当前 PowerShell 会话设置以下覆盖，不要修改用户的全局 Git 或代理配置：
@@ -243,10 +260,10 @@ $env:CARGO_INCREMENTAL='0'
 - 可用物理内存约 4 GB；并行编译曾在 `protoc-bin-vendored` 附近异常失败，`CARGO_BUILD_JOBS=1` 是必要条件。
 - TUI 重新链接常需 2–3 分钟，长时间无输出不等于挂死。
 - `codex-rs/target` 曾增长到 33.13 GiB，其中 17.77 GiB 是 incremental；已用 `cargo clean` 释放 33.1 GiB，并在根 `AGENTS.md` 写入 20 GiB 硬红线、18 GiB 预警和清理纪律。
-- 后续本地 Rust 命令必须设置 `CARGO_INCREMENTAL=0` 并在命令前后检查 `codex-rs/target`；不得并发启动多套构建。本轮完整测试和 Clippy 后最终占用为 10.76 GiB，仍低于红线。
+- 后续本地 Rust 命令必须设置 `CARGO_INCREMENTAL=0` 并在命令前后检查 `codex-rs/target`；不得并发启动多套构建。本轮 target 一度达到 18.21 GiB，已按纪律执行 `cargo clean` 释放约 18.2 GiB；完成重新构建、完整测试和 Clippy 后为 15.74 GiB，低于红线。
 - Rust 为项目锁定的 1.95；`just` 1.58；`cargo-nextest` 0.9.143。
-- 当前机器未安装 WezTerm、Kitty、CMake、Ninja。
-- 在安装或由用户提供 WezTerm 前，无法完成真实终端图片验收。
+- 当前机器已安装 WezTerm `20240203-110809-5046fc22`；Kitty 未安装，也未为本轮额外安装。Windows WezTerm 已足够完成聊天图片与文本降级对照。
+- CMake、Ninja 是否可用与本轮 TUI 验收无关，未为此安装或修改。
 
 ## 8. 下一步实施顺序
 
@@ -268,7 +285,7 @@ $env:CARGO_INCREMENTAL='0'
 - history writer 在保留行进入 scrollback 时发送，只使用列定位；
 - scoped reflow 保留未参与本次重建的旧 scrollback placement。
 
-下一步必须在真实 WezTerm 中设置显式 override，验证 active→history、滚动、resize、redraw、消息移除和退出。若不能证明 placement 随 scrollback 正确移动，就不要把仅在当前帧看似正确的 overlay 当作完成。
+Windows WezTerm 核心 smoke 已完成：finalized history 图片、滚动、resize/reflow、退出 retirement 和无 override 文本降级均通过。下一步若继续收口 Phase 1，只需专门补做任务切换/消息移除的人工视觉操作，并保存截图或日志；不要重复已经通过的核心 smoke，也不要在这一缺口关闭前扩大到网络下载、缓存、Sixel 或 LaTeX。
 
 ### 8.3 再进入异步 I/O
 
@@ -284,8 +301,8 @@ $env:CARGO_INCREMENTAL='0'
 
 ## 9. 尚未完成
 
-- 聊天区已经具备显式 override 下的静态本地 PNG Kitty 写入路径，但尚未通过真实终端视觉验收；
-- 尚未在 WezTerm 中做真实协议验收；
+- 聊天区的 Windows WezTerm iTerm2 inline 静态本地 PNG 核心视觉验收已通过；任务切换/消息移除仍缺专门人工操作记录；
+- active streaming 瞬间没有单独截图，当前可靠证据集中在 finalized history、滚动、resize/reflow、退出 retirement 与文本降级；
 - 尚无本地图片解码、缩放和缓存；
 - 尚无远程 HTTPS 下载器和 DNS 级 SSRF 防护；
 - Sixel 编码仍留在 pets 专用实现，尚未完全移入通用媒体层；
@@ -298,7 +315,7 @@ $env:CARGO_INCREMENTAL='0'
 | 阶段 | 状态 |
 |---|---|
 | Phase 0：基线与架构勘察 | 已完成 |
-| Phase 1：图片语法、协议、节点与布局 | 进行中 |
+| Phase 1：图片语法、协议、节点与布局 | 进行中（Windows WezTerm 核心 smoke 已通过） |
 | Phase 2：本地/远程图片 I/O 与缓存 | 待开始（仅来源解析已提前完成） |
 | Phase 3：LaTeX | 待开始 |
 | Phase 4：交互与配置 | 待开始 |
@@ -321,7 +338,7 @@ Windows 下 `git status --short` 当前会显示：
 - TUI 测试优先 `just test -p codex-tui <filter>`；
 - 新行为必须先写失败测试，确认 RED 后做最小实现并确认 GREEN；
 - 本轮所有文件完成后统一提交，禁止 `git add .`；
-- 本轮建议提交信息：`feat: 锚定聊天媒体到终端历史`。
+- 本轮建议提交信息：`feat: 支持 Windows WezTerm 聊天图片`。
 
 ## 11. 新对话的起手命令
 
@@ -345,16 +362,17 @@ Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\app\resize_reflow.rs
 Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\tui.rs
 ```
 
-从真实 WezTerm smoke test 和滚动/resize 视觉验收开始；不要重做已经完成的 capability override、稳定 anchor、可注入 writer 或 history insertion-time 锚定。真实终端不通过时，先记录 direct placement 的具体失败模式，再决定是否切换 Kitty Unicode placeholders。
+不要重做已经通过的 Windows WezTerm 核心 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定或 finalized consolidation reflow。若继续 Phase 1，优先专门验证任务切换/消息移除；若该场景失败，先记录 iTerm2 inline placement 的具体生命周期缺口，再决定最小修复。
 
 ## 12. Phase 1 完成判据
 
 不能仅凭单元测试或控制序列生成正确就宣布 Phase 1 完成。至少需要同时满足：
 
-- 静态本地 PNG 在真实 WezTerm 的助手消息正确位置显示；
-- 文本宽度变化与 resize 后位置正确；
-- redraw、滚动、切换会话、退出不会遗留幽灵图片；
-- 不支持协议时文本降级正常；
-- raw Markdown 与复制内容不含终端协议字节；
-- 相关定向测试和完整 `codex-tui` 测试集通过；
-- 相关文档已同步并完成 Git 提交。
+- [x] 静态本地 PNG 在真实 WezTerm 的 finalized 助手消息位置显示；
+- [x] 文本宽度变化与 resize/reflow 后未观察到位置残影；
+- [x] redraw/reflow、滚动和退出后重启未遗留幽灵图片；
+- [ ] 任务切换或消息移除仍需一轮专门视觉记录；
+- [x] 不支持协议时文本降级正常且日志中没有 placement/write；
+- [x] raw Markdown、复制内容和持久化 `Line` 不含终端协议字节；
+- [x] 相关定向测试通过，完整 `codex-tui` 测试集只保留两项既有基线失败；
+- [x] 本轮相关文档已同步并纳入精确 Git 提交。

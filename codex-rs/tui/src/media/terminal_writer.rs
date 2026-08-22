@@ -16,6 +16,7 @@ use super::ImageProtocol;
 use super::ImageSource;
 use super::MediaNode;
 use super::MediaPlacementUpdate;
+use super::iterm2_transmit_png;
 use super::kitty_delete_image;
 use super::kitty_transmit_png_file_with_id;
 use super::kitty_transmit_png_with_id;
@@ -31,33 +32,40 @@ pub(crate) struct MediaWriteReport {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PreparedKittyPlacement {
+pub(crate) struct PreparedMediaPlacement {
     pub(crate) rect: Rect,
     pub(crate) command: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct PreparedKittyUpdate {
+pub(crate) struct PreparedMediaUpdate {
     pub(crate) deletions: Vec<String>,
-    pub(crate) placements: Vec<PreparedKittyPlacement>,
+    pub(crate) placements: Vec<PreparedMediaPlacement>,
     pub(crate) report: MediaWriteReport,
 }
 
-pub(crate) fn prepare_kitty_placement_update(
+pub(crate) fn prepare_media_placement_update(
     protocol: ImageProtocol,
     update: &MediaPlacementUpdate,
-) -> Result<PreparedKittyUpdate> {
+) -> Result<PreparedMediaUpdate> {
     if matches!(protocol, ImageProtocol::Sixel) {
-        bail!("Kitty placement writer does not support Sixel");
+        bail!("terminal placement writer does not support Sixel");
     }
 
-    let mut prepared = PreparedKittyUpdate {
-        deletions: update
-            .retired
-            .iter()
-            .map(|image_id| kitty_delete_image(*image_id))
-            .collect(),
-        ..PreparedKittyUpdate::default()
+    let mut prepared = PreparedMediaUpdate {
+        deletions: if matches!(
+            protocol,
+            ImageProtocol::Kitty | ImageProtocol::KittyLocalFile
+        ) {
+            update
+                .retired
+                .iter()
+                .map(|image_id| kitty_delete_image(*image_id))
+                .collect()
+        } else {
+            Vec::new()
+        },
+        ..PreparedMediaUpdate::default()
     };
     for placement in &update.placed {
         let source = match &placement.request.request.node {
@@ -73,6 +81,7 @@ pub(crate) fn prepare_kitty_placement_update(
         }
         let rect = placement.request.request.rect;
         let command = match protocol {
+            ImageProtocol::Iterm2Inline => iterm2_transmit_png(&path, rect.width, rect.height)?,
             ImageProtocol::Kitty => {
                 kitty_transmit_png_with_id(&path, rect.width, rect.height, Some(placement.id))?
             }
@@ -83,7 +92,7 @@ pub(crate) fn prepare_kitty_placement_update(
         };
         prepared
             .placements
-            .push(PreparedKittyPlacement { rect, command });
+            .push(PreparedMediaPlacement { rect, command });
         prepared.report.placed += 1;
     }
     Ok(prepared)
@@ -106,12 +115,12 @@ fn has_png_signature(path: &Path) -> Result<bool> {
 /// Only static local PNG sources are handled here. Remote sources and invalid paths remain text
 /// fallbacks until the bounded asynchronous loader exists. The request objects are read-only, so
 /// terminal protocol bytes cannot leak back into Ratatui lines or persisted transcript source.
-pub(crate) fn write_kitty_placement_update(
+pub(crate) fn write_media_placement_update(
     writer: &mut impl Write,
     protocol: ImageProtocol,
     update: &MediaPlacementUpdate,
 ) -> Result<MediaWriteReport> {
-    let prepared = prepare_kitty_placement_update(protocol, update)?;
+    let prepared = prepare_media_placement_update(protocol, update)?;
     for command in &prepared.deletions {
         writer.write_all(command.as_bytes())?;
     }

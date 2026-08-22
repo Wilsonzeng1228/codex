@@ -5,6 +5,7 @@ use std::fs;
 use serial_test::serial;
 
 use super::MediaId;
+use super::iterm2_transmit_png;
 use super::kitty_delete_image;
 use super::kitty_transmit_png_with_id;
 
@@ -49,4 +50,18 @@ fn kitty_commands_are_scoped_to_the_supplied_media_id() {
     );
     assert_eq!(media_id.get(), 23);
     assert_eq!(MediaId::new(0), None);
+}
+
+#[test]
+fn iterm2_inline_command_uses_cell_dimensions_and_allows_terminal_cursor_movement() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("image.png");
+    fs::write(&path, b"png").unwrap();
+
+    let command = iterm2_transmit_png(&path, /*columns*/ 10, /*rows*/ 4).unwrap();
+
+    assert_eq!(
+        command,
+        "\x1b]1337;File=size=3;width=10;height=4;inline=1:cG5n\x1b\\"
+    );
 }

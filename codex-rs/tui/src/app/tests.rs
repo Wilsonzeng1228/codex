@@ -5865,6 +5865,32 @@ async fn directive_only_completion_removes_streamed_directive() -> Result<()> {
 }
 
 #[tokio::test]
+async fn agent_message_consolidation_reflows_media_without_resize() -> Result<()> {
+    let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
+    app.transcript_cells = vec![Arc::new(AgentMessageCell::new(
+        vec![Line::from("[image: diagram] (D:/course/diagram.png)")],
+        /*is_first_line*/ true,
+    ))];
+
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let placeholder_rows =
+        crate::media::MediaPlaceholderRows::try_from(3).expect("non-zero placeholder height");
+    tui.set_chat_media_capability_override(Some(placeholder_rows));
+
+    app.handle_consolidate_agent_message(
+        &mut tui,
+        "![diagram](D:/course/diagram.png)".to_string(),
+        PathBuf::from("/tmp"),
+        /*inline_visualization_context*/ None,
+        ConsolidationScrollbackReflow::IfResizeReflowRan,
+        /*deferred_history_cell*/ None,
+    )?;
+
+    assert_eq!(tui.pending_history_media_placements().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
 async fn required_stream_reflow_during_capped_initial_replay_survives_transcript_overlay()
 -> Result<()> {
     let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;

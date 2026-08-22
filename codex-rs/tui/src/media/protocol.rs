@@ -17,6 +17,7 @@ pub(crate) struct ChatMediaCapability {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ImageProtocol {
+    Iterm2Inline,
     Kitty,
     KittyLocalFile,
     Sixel,
@@ -48,11 +49,12 @@ pub(crate) fn detect_image_support() -> ImageSupport {
         return ImageSupport::Unsupported(ImageUnsupportedReason::Zellij);
     }
 
-    if env::var_os("KITTY_WINDOW_ID").is_some()
-        || env::var_os("WEZTERM_EXECUTABLE").is_some()
-        || env::var_os("WEZTERM_VERSION").is_some()
-    {
+    if env::var_os("KITTY_WINDOW_ID").is_some() {
         return ImageSupport::Supported(ImageProtocol::Kitty);
+    }
+
+    if env::var_os("WEZTERM_EXECUTABLE").is_some() || env::var_os("WEZTERM_VERSION").is_some() {
+        return ImageSupport::Supported(wezterm_image_protocol());
     }
 
     image_support_for_terminal(&terminal_info())
@@ -69,6 +71,7 @@ pub(crate) fn parse_chat_media_capability_override(
     placeholder_rows: Option<&str>,
 ) -> Option<ChatMediaCapability> {
     let protocol = match protocol {
+        Some("iterm2") => ImageProtocol::Iterm2Inline,
         Some("kitty") => ImageProtocol::Kitty,
         _ => return None,
     };
@@ -104,6 +107,10 @@ pub(crate) fn image_support_for_terminal(info: &TerminalInfo) -> ImageSupport {
         return ImageSupport::Unsupported(ImageUnsupportedReason::Iterm2TooOld);
     }
 
+    if is_wezterm_terminal(info) {
+        return ImageSupport::Supported(wezterm_image_protocol());
+    }
+
     if supports_kitty_graphics(info) {
         return ImageSupport::Supported(ImageProtocol::Kitty);
     }
@@ -129,15 +136,25 @@ fn is_iterm2_terminal(info: &TerminalInfo) -> bool {
 }
 
 fn supports_kitty_graphics(info: &TerminalInfo) -> bool {
-    matches!(
-        info.name,
-        TerminalName::Ghostty | TerminalName::Kitty | TerminalName::WezTerm
-    ) || terminal_field_contains(info.term.as_deref(), "kitty")
+    matches!(info.name, TerminalName::Ghostty | TerminalName::Kitty)
+        || terminal_field_contains(info.term.as_deref(), "kitty")
         || terminal_field_contains(info.term.as_deref(), "ghostty")
-        || terminal_field_contains(info.term.as_deref(), "wezterm")
         || terminal_field_contains(info.term_program.as_deref(), "kitty")
         || terminal_field_contains(info.term_program.as_deref(), "ghostty")
+}
+
+fn is_wezterm_terminal(info: &TerminalInfo) -> bool {
+    matches!(info.name, TerminalName::WezTerm)
+        || terminal_field_contains(info.term.as_deref(), "wezterm")
         || terminal_field_contains(info.term_program.as_deref(), "wezterm")
+}
+
+fn wezterm_image_protocol() -> ImageProtocol {
+    if cfg!(windows) {
+        ImageProtocol::Iterm2Inline
+    } else {
+        ImageProtocol::Kitty
+    }
 }
 
 fn supports_sixel(info: &TerminalInfo) -> bool {

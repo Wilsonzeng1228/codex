@@ -33,6 +33,15 @@ pub(crate) fn kitty_delete_image(image_id: MediaId) -> String {
     wrap_for_tmux_if_needed(&format!("{ESC}_Ga=d,d=I,i={image_id},q=2;{ST}"))
 }
 
+pub(crate) fn iterm2_transmit_png(path: &Path, columns: u16, rows: u16) -> Result<String> {
+    let png = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let size = png.len();
+    let payload = general_purpose::STANDARD.encode(png);
+    Ok(format!(
+        "{ESC}]1337;File=size={size};width={columns};height={rows};inline=1:{payload}{ST}"
+    ))
+}
+
 pub(crate) fn kitty_transmit_png_with_id(
     path: &Path,
     columns: u16,

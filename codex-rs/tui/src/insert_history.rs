@@ -126,7 +126,7 @@ where
 pub(crate) fn insert_history_hyperlink_lines_with_media_and_mode_and_wrap_policy<B>(
     terminal: &mut crate::custom_terminal::Terminal<B>,
     lines: &[HyperlinkLine],
-    media_placements: &[crate::media::PreparedKittyPlacement],
+    media_placements: &[crate::media::PreparedMediaPlacement],
     mode: InsertHistoryMode,
     wrap_policy: HistoryLineWrapPolicy,
     screen_size: Size,
@@ -393,7 +393,7 @@ fn write_history_line<W: Write>(
 fn write_history_media_for_logical_row<W: Write>(
     writer: &mut W,
     logical_row: u16,
-    placements: &[crate::media::PreparedKittyPlacement],
+    placements: &[crate::media::PreparedMediaPlacement],
 ) -> io::Result<()> {
     for placement in placements
         .iter()
@@ -567,7 +567,7 @@ mod tests {
 
     #[test]
     fn history_media_is_emitted_on_its_reserved_row_without_absolute_y_positioning() {
-        let placement = crate::media::PreparedKittyPlacement {
+        let placement = crate::media::PreparedMediaPlacement {
             rect: Rect::new(
                 /*x*/ 4, /*y*/ 1, /*width*/ 12, /*height*/ 3,
             ),

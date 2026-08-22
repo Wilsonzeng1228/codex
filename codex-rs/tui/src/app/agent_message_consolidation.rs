@@ -45,9 +45,21 @@ impl App {
         // Walk backward to find the contiguous run of streaming AgentMessageCells that
         // belong to the just-finalized stream.
         let end = self.transcript_cells.len();
+        let media_node_count = crate::media::extract_media_nodes(&source).len();
+        let scrollback_reflow =
+            if media_node_count > 0 && tui.chat_media_placeholder_rows().is_some() {
+                // Streaming cells emit the text fallback before the finalized source-backed cell
+                // exists. Rebuild once so media placeholders and placements enter scrollback even
+                // when no resize happened during the stream.
+                ConsolidationScrollbackReflow::Required
+            } else {
+                scrollback_reflow
+            };
         tracing::debug!(
-            "ConsolidateAgentMessage: transcript_cells.len()={end}, source_len={}",
-            source.len()
+            source_len = source.len(),
+            media_node_count,
+            ?scrollback_reflow,
+            "ConsolidateAgentMessage: transcript_cells.len()={end}"
         );
         let start = trailing_run_start::<history_cell::AgentMessageCell>(&self.transcript_cells);
         if start < end {

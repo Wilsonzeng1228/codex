@@ -15,6 +15,12 @@ fn explicit_chat_media_override_is_bounded_and_disabled_by_default() {
 
     assert_eq!(enabled.protocol, ImageProtocol::Kitty);
     assert_eq!(enabled.placeholder_rows.get(), 4);
+    assert_eq!(
+        parse_chat_media_capability_override(Some("iterm2"), Some("4"))
+            .expect("valid explicit iTerm2 override")
+            .protocol,
+        ImageProtocol::Iterm2Inline
+    );
     assert_eq!(parse_chat_media_capability_override(None, None), None);
     assert_eq!(
         parse_chat_media_capability_override(Some("kitty"), Some("0")),
@@ -53,7 +59,11 @@ fn protocol_detection_is_shared_and_multiplexer_safe() {
 
     assert_eq!(
         image_support_for_terminal(&wezterm),
-        ImageSupport::Supported(ImageProtocol::Kitty)
+        ImageSupport::Supported(if cfg!(windows) {
+            ImageProtocol::Iterm2Inline
+        } else {
+            ImageProtocol::Kitty
+        })
     );
     assert_eq!(
         image_support_for_terminal(&windows_terminal),

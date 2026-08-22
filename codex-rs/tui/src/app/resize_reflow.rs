@@ -99,6 +99,15 @@ impl App {
             self.chat_widget.history_render_mode(),
             image_placeholder_rows,
         );
+        if !layout.placements.is_empty() {
+            tracing::debug!(
+                width,
+                placeholder_rows = ?image_placeholder_rows.map(crate::media::MediaPlaceholderRows::get),
+                lines = layout.lines.len(),
+                placements = layout.placements.len(),
+                "laid out history media"
+            );
+        }
         if !layout.lines.is_empty() && !cell.is_stream_continuation() {
             if self.has_emitted_history_lines {
                 layout

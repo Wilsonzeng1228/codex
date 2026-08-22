@@ -20,6 +20,7 @@ mod resolver_tests;
 mod terminal_writer_tests;
 
 pub(crate) use image::MediaId;
+pub(crate) use image::iterm2_transmit_png;
 pub(crate) use image::kitty_delete_image;
 pub(crate) use image::kitty_transmit_png_file_with_id;
 pub(crate) use image::kitty_transmit_png_with_id;
@@ -49,6 +50,6 @@ pub(crate) use resolver::ImageSource;
 #[cfg(test)]
 pub(crate) use resolver::ImageSourceError;
 pub(crate) use resolver::resolve_image_source;
-pub(crate) use terminal_writer::PreparedKittyPlacement;
-pub(crate) use terminal_writer::prepare_kitty_placement_update;
-pub(crate) use terminal_writer::write_kitty_placement_update;
+pub(crate) use terminal_writer::PreparedMediaPlacement;
+pub(crate) use terminal_writer::prepare_media_placement_update;
+pub(crate) use terminal_writer::write_media_placement_update;

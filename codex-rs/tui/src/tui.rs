@@ -968,6 +968,16 @@ impl Tui {
         self.chat_media_placeholder_rows
     }
 
+    pub(crate) fn log_chat_media_capability(&self) {
+        tracing::info!(
+            protocol_override = ?std::env::var("CODEX_TUI_MEDIA_CAPABILITY_OVERRIDE").ok(),
+            placeholder_rows_override = ?std::env::var("CODEX_TUI_MEDIA_PLACEHOLDER_ROWS").ok(),
+            protocol = ?self.chat_media_protocol,
+            placeholder_rows = ?self.chat_media_placeholder_rows.map(crate::media::MediaPlaceholderRows::get),
+            "initialized chat media capability"
+        );
+    }
+
     #[cfg(test)]
     pub(crate) fn set_chat_media_capability_override(
         &mut self,
@@ -1010,12 +1020,25 @@ impl Tui {
         let Some(protocol) = self.chat_media_protocol else {
             return;
         };
-        if let Err(error) = crate::media::write_kitty_placement_update(
+        match crate::media::write_media_placement_update(
             self.terminal.backend_mut(),
             protocol,
             update,
         ) {
-            tracing::warn!(%error, "failed to update chat media placements");
+            Ok(report) if !update.placed.is_empty() || !update.retired.is_empty() => {
+                tracing::debug!(
+                    ?protocol,
+                    requested = update.placed.len(),
+                    retired = update.retired.len(),
+                    placed = report.placed,
+                    skipped = report.skipped,
+                    "updated chat media placements"
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(%error, "failed to update chat media placements");
+            }
         }
     }
 
@@ -1085,7 +1108,7 @@ impl Tui {
                 }
             };
             let prepared = chat_media_protocol.and_then(|protocol| {
-                match crate::media::prepare_kitty_placement_update(protocol, &update) {
+                match crate::media::prepare_media_placement_update(protocol, &update) {
                     Ok(prepared) => Some(prepared),
                     Err(error) => {
                         tracing::warn!(%error, "failed to prepare history media placements");
@@ -1093,6 +1116,16 @@ impl Tui {
                     }
                 }
             });
+            if !update.placed.is_empty() || !update.retired.is_empty() {
+                tracing::debug!(
+                    ?chat_media_protocol,
+                    requested = update.placed.len(),
+                    retired = update.retired.len(),
+                    prepared = prepared.as_ref().map_or(0, |update| update.report.placed),
+                    skipped = prepared.as_ref().map_or(0, |update| update.report.skipped),
+                    "prepared history media placements"
+                );
+            }
             if let Some(prepared) = &prepared {
                 for command in &prepared.deletions {
                     terminal.backend_mut().write_all(command.as_bytes())?;

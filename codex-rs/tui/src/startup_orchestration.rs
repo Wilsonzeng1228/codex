@@ -528,6 +528,8 @@ pub(super) async fn run_main_inner(
         .with(otel_tracing_layer)
         .try_init();
 
+    startup_draft.tui_mut().log_chat_media_capability();
+
     let app_result = run_ratatui_app(
         cli,
         arg0_paths,

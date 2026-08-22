@@ -879,7 +879,14 @@ impl App {
                 Ok(rendered_area)
             },
         )?;
-        tui.replace_active_media_placements(self.chat_widget.take_media_placement_requests());
+        let media_placements = self.chat_widget.take_media_placement_requests();
+        if !media_placements.is_empty() {
+            tracing::debug!(
+                placements = media_placements.len(),
+                "laid out active chat media"
+            );
+        }
+        tui.replace_active_media_placements(media_placements);
         Ok(rendered_area)
     }
 

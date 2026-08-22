@@ -10,7 +10,7 @@ use super::MediaCellId;
 use super::MediaNode;
 use super::MediaPlacementRegistry;
 use super::MediaPlacementRequest;
-use super::write_kitty_placement_update;
+use super::write_media_placement_update;
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 
@@ -64,7 +64,7 @@ fn kitty_writer_deletes_retired_ids_before_replaying_local_png_placement() {
     let request_before_write = update.placed[0].request.clone();
     let mut output = Vec::new();
 
-    let report = write_kitty_placement_update(&mut output, ImageProtocol::Kitty, &update)
+    let report = write_media_placement_update(&mut output, ImageProtocol::Kitty, &update)
         .expect("write placement update");
     let output = String::from_utf8(output).expect("Kitty commands are UTF-8");
     let delete_offset = output
@@ -98,7 +98,7 @@ fn kitty_writer_skips_remote_sources_without_emitting_protocol_bytes_for_them() 
     )]);
     let mut output = Vec::new();
 
-    let report = write_kitty_placement_update(&mut output, ImageProtocol::Kitty, &update)
+    let report = write_media_placement_update(&mut output, ImageProtocol::Kitty, &update)
         .expect("skip unsupported remote placement");
 
     assert!(output.is_empty());
@@ -123,10 +123,48 @@ fn kitty_writer_skips_local_files_without_a_png_signature() {
     )]);
     let mut output = Vec::new();
 
-    let report = write_kitty_placement_update(&mut output, ImageProtocol::Kitty, &update)
+    let report = write_media_placement_update(&mut output, ImageProtocol::Kitty, &update)
         .expect("skip local non-PNG placement");
 
     assert!(output.is_empty());
     assert_eq!(report.placed, 0);
     assert_eq!(report.skipped, 1);
+}
+
+#[test]
+#[serial]
+fn iterm2_writer_restores_cursor_without_suppressing_protocol_cursor_movement() {
+    let dir = tempfile::tempdir().expect("temporary image directory");
+    let first_path = dir.path().join("first.png");
+    let second_path = dir.path().join("second.png");
+    fs::write(&first_path, [PNG_SIGNATURE.as_slice(), b"one"].concat())
+        .expect("write first png fixture");
+    fs::write(&second_path, [PNG_SIGNATURE.as_slice(), b"two"].concat())
+        .expect("write second png fixture");
+    let first_cell = MediaCellId::new(25).expect("non-zero media cell id");
+    let second_cell = MediaCellId::new(26).expect("non-zero media cell id");
+    let mut registry = MediaPlacementRegistry::default();
+    registry.replace_active(vec![local_request(
+        first_cell,
+        first_path.to_string_lossy().into_owned(),
+        Rect::new(1, 2, 10, 3),
+    )]);
+    let update = registry.replace_active(vec![local_request(
+        second_cell,
+        second_path.to_string_lossy().into_owned(),
+        Rect::new(4, 5, 12, 4),
+    )]);
+    let mut output = Vec::new();
+
+    let report = write_media_placement_update(&mut output, ImageProtocol::Iterm2Inline, &update)
+        .expect("write iTerm2 placement update");
+    let output = String::from_utf8(output).expect("iTerm2 command is UTF-8");
+
+    assert!(output.contains("\x1b]1337;File=size=11;width=12;height=4;inline=1:"));
+    assert!(!output.contains("doNotMoveCursor"));
+    assert!(output.contains("\x1b\\\x1b8"));
+    assert!(!output.contains("\x1b_G"));
+    assert!(output.contains("\x1b[6;5H"));
+    assert_eq!(report.placed, 1);
+    assert_eq!(report.skipped, 0);
 }
