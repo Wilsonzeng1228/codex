@@ -1,6 +1,7 @@
 mod image;
 mod layout;
 mod node;
+mod placement;
 mod protocol;
 mod resolver;
 
@@ -8,6 +9,8 @@ mod resolver;
 mod image_tests;
 #[cfg(test)]
 mod node_tests;
+#[cfg(test)]
+mod placement_tests;
 #[cfg(test)]
 mod protocol_tests;
 #[cfg(test)]
@@ -22,6 +25,8 @@ pub(crate) use layout::MediaPlaceholderRows;
 pub(crate) use layout::MediaPlacementRequest;
 pub(crate) use node::MediaNode;
 pub(crate) use node::extract_media_nodes;
+pub(crate) use placement::MediaPlacementRegistry;
+pub(crate) use placement::MediaPlacementUpdate;
 pub(crate) use protocol::ImageProtocol;
 pub(crate) use protocol::ImageSupport;
 pub(crate) use protocol::ImageUnsupportedReason;

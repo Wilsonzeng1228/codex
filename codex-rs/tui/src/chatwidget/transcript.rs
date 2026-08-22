@@ -11,6 +11,7 @@ pub(super) struct ActiveCellLayoutCacheKey {
     pub(super) revision: u64,
     pub(super) width: u16,
     pub(super) render_mode: HistoryRenderMode,
+    pub(super) image_placeholder_rows: Option<crate::media::MediaPlaceholderRows>,
     pub(super) syntax_theme_revision: u64,
 }
 

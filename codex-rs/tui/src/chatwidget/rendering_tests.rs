@@ -1,6 +1,7 @@
 use super::*;
 use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
 use pretty_assertions::assert_eq;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -73,6 +74,52 @@ fn contains_text(buffer: &Buffer, text: &str) -> bool {
                 .collect::<String>()
                 .contains(text)
         })
+}
+
+#[tokio::test]
+async fn explicit_media_capability_reserves_active_rows_and_collects_placements() {
+    let (mut widget, _sender, _events, _operations) = make_chatwidget_manual_with_sender().await;
+    widget.transcript.active_cell = Some(Box::new(history_cell::AgentMarkdownCell::new(
+        "Before\n\n![diagram](D:/course/diagram.png)\n\nAfter".to_string(),
+        Path::new("/tmp"),
+    )));
+    let placeholder_rows =
+        crate::media::MediaPlaceholderRows::try_from(3).expect("non-zero placeholder height");
+    widget.begin_media_frame(Some(placeholder_rows));
+
+    let frame = render_frame(&widget, /*width*/ 40);
+    let placements = widget.take_media_placement_requests();
+
+    assert_eq!(placements.len(), 1);
+    assert_eq!(placements[0].rect.height, 3);
+    assert!(frame.area.height >= 7);
+    assert!(
+        frame
+            .content
+            .iter()
+            .all(|cell| !cell.symbol().contains('\x1b'))
+    );
+}
+
+#[tokio::test]
+async fn disabled_media_capability_keeps_active_text_fallback() {
+    let (mut widget, _sender, _events, _operations) = make_chatwidget_manual_with_sender().await;
+    widget.transcript.active_cell = Some(Box::new(history_cell::AgentMarkdownCell::new(
+        "![diagram](D:/course/diagram.png)".to_string(),
+        Path::new("/tmp"),
+    )));
+    widget.begin_media_frame(/*image_placeholder_rows*/ None);
+
+    let frame = render_frame(&widget, /*width*/ 40);
+
+    assert!(widget.take_media_placement_requests().is_empty());
+    assert!(contains_text(&frame, "[image: diagram]"));
+    assert!(
+        frame
+            .content
+            .iter()
+            .all(|cell| !cell.symbol().contains('\x1b'))
+    );
 }
 
 #[tokio::test]

@@ -31,6 +31,7 @@ impl Tui {
         Self::flush_pending_history_lines(
             &mut self.terminal,
             &mut self.pending_history_lines,
+            &mut self.media_placements,
             self.scrollback,
             screen_size,
         )?;
@@ -43,6 +44,7 @@ impl Tui {
             wrap_policy,
         )?;
         if replaced {
+            self.media_placements.replace_history(Vec::new());
             self.frame_requester().schedule_frame();
         }
         Ok(replaced)

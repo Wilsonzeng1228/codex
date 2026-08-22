@@ -7,6 +7,18 @@ use crate::terminal_hyperlinks::visible_lines;
 use std::cell::Cell;
 
 impl ChatWidget {
+    pub(crate) fn begin_media_frame(
+        &self,
+        image_placeholder_rows: Option<crate::media::MediaPlaceholderRows>,
+    ) {
+        self.media_placeholder_rows.set(image_placeholder_rows);
+        self.media_placement_requests.borrow_mut().clear();
+    }
+
+    pub(crate) fn take_media_placement_requests(&self) -> Vec<crate::media::MediaPlacementRequest> {
+        std::mem::take(&mut *self.media_placement_requests.borrow_mut())
+    }
+
     pub(crate) fn as_renderable(&self) -> RenderableItem<'_> {
         if self
             .bottom_pane
@@ -41,6 +53,9 @@ impl ChatWidget {
                         render_mode: self.history_render_mode(),
                     },
                 ),
+                render_mode: self.history_render_mode(),
+                image_placeholder_rows: self.media_placeholder_rows.get(),
+                media_placement_requests: &self.media_placement_requests,
             })),
             None => RenderableItem::Owned(Box::new(())),
         };
@@ -51,6 +66,9 @@ impl ChatWidget {
                     top: 1,
                     right: active_cell_right_reserve,
                     persistent_layout: None,
+                    render_mode: self.history_render_mode(),
+                    image_placeholder_rows: self.media_placeholder_rows.get(),
+                    media_placement_requests: &self.media_placement_requests,
                 }))
             }
             _ => RenderableItem::Owned(Box::new(())),
@@ -66,6 +84,9 @@ impl ChatWidget {
                     top: 1,
                     right: active_cell_right_reserve,
                     persistent_layout: None,
+                    render_mode: self.history_render_mode(),
+                    image_placeholder_rows: self.media_placeholder_rows.get(),
+                    media_placement_requests: &self.media_placement_requests,
                 })),
             );
         }
@@ -77,6 +98,9 @@ impl ChatWidget {
                     top: 1,
                     right: active_cell_right_reserve,
                     persistent_layout: None,
+                    render_mode: self.history_render_mode(),
+                    image_placeholder_rows: self.media_placeholder_rows.get(),
+                    media_placement_requests: &self.media_placement_requests,
                 })),
             );
         }
@@ -101,6 +125,9 @@ struct TranscriptAreaRenderable<'a> {
     top: u16,
     right: u16,
     persistent_layout: Option<PersistentActiveCellLayout<'a>>,
+    render_mode: HistoryRenderMode,
+    image_placeholder_rows: Option<crate::media::MediaPlaceholderRows>,
+    media_placement_requests: &'a std::cell::RefCell<Vec<crate::media::MediaPlacementRequest>>,
 }
 
 struct PersistentActiveCellLayout<'a> {
@@ -113,9 +140,11 @@ struct PersistentActiveCellLayout<'a> {
 impl Renderable for TranscriptAreaRenderable<'_> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let area = self.child_area(area);
-        let layout = self
-            .child
-            .display_media_layout(area.width, /*image_placeholder_rows*/ None);
+        let layout = self.child.display_media_layout_for_mode(
+            area.width,
+            self.render_mode,
+            self.image_placeholder_rows,
+        );
         let lines = visible_lines(layout.lines);
         let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
         let y = if area.height == 0 {
@@ -138,6 +167,7 @@ impl Renderable for TranscriptAreaRenderable<'_> {
         };
         Clear.render(area, buf);
         paragraph.scroll((y, 0)).render(area, buf);
+        self.collect_visible_media_placements(area, y, layout.placements);
     }
 
     fn desired_height(&self, width: u16) -> u16 {
@@ -146,13 +176,13 @@ impl Renderable for TranscriptAreaRenderable<'_> {
             if let Some(height) = layout.desired_height {
                 height
             } else {
-                let height = HistoryCell::desired_height(self.child, child_width);
+                let height = self.media_desired_height(child_width);
                 layout.desired_height = Some(height);
                 cache.set(Some(layout));
                 height
             }
         } else {
-            HistoryCell::desired_height(self.child, child_width)
+            self.media_desired_height(child_width)
         };
         desired_height + self.top
     }
@@ -169,6 +199,7 @@ impl TranscriptAreaRenderable<'_> {
             revision: persistent.revision,
             width,
             render_mode: persistent.render_mode,
+            image_placeholder_rows: self.image_placeholder_rows,
             syntax_theme_revision: crate::render::highlight::syntax_theme_revision(),
         };
         let layout = persistent
@@ -192,6 +223,49 @@ impl TranscriptAreaRenderable<'_> {
             area.width.saturating_sub(self.right).max(1),
             height,
         )
+    }
+
+    fn media_desired_height(&self, width: u16) -> u16 {
+        let Some(image_placeholder_rows) = self.image_placeholder_rows else {
+            return HistoryCell::desired_height(self.child, width);
+        };
+        let layout = self.child.display_media_layout_for_mode(
+            width,
+            self.render_mode,
+            Some(image_placeholder_rows),
+        );
+        let line_count = Paragraph::new(Text::from(visible_lines(layout.lines)))
+            .wrap(Wrap { trim: false })
+            .line_count(width);
+        u16::try_from(line_count).unwrap_or(u16::MAX)
+    }
+
+    fn collect_visible_media_placements(
+        &self,
+        area: Rect,
+        scroll_y: u16,
+        placements: Vec<crate::media::MediaPlacementRequest>,
+    ) {
+        let mut collected = self.media_placement_requests.borrow_mut();
+        for mut placement in placements {
+            let visible_top = placement.rect.y.saturating_sub(scroll_y);
+            let clipped_top = placement.rect.y.max(scroll_y);
+            let clipped_bottom = placement
+                .rect
+                .bottom()
+                .min(scroll_y.saturating_add(area.height));
+            if clipped_bottom <= clipped_top {
+                continue;
+            }
+            placement.rect.x = area.x.saturating_add(placement.rect.x);
+            placement.rect.y = area.y.saturating_add(visible_top);
+            placement.rect.width = placement.rect.width.min(
+                area.width
+                    .saturating_sub(placement.rect.x.saturating_sub(area.x)),
+            );
+            placement.rect.height = clipped_bottom - clipped_top;
+            collected.push(placement);
+        }
     }
 }
 

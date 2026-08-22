@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::test_support::make_test_app;
+use crate::history_cell::AgentMarkdownCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::legacy_core::config::TerminalResizeReflowMaxRows;
 use pretty_assertions::assert_eq;
@@ -20,6 +21,79 @@ fn rendered_line_text(line: &HyperlinkLine) -> String {
         .iter()
         .map(|span| span.content.as_ref())
         .collect()
+}
+
+#[tokio::test]
+async fn explicit_media_capability_flows_through_scrollback_reflow_layout() {
+    let mut app = make_test_app().await;
+    let source = "Before\n\n![diagram](D:/course/diagram.png)\n\nAfter";
+    app.transcript_cells = vec![Arc::new(AgentMarkdownCell::new(
+        source.to_string(),
+        std::path::Path::new("/tmp"),
+    ))];
+    let placeholder_rows =
+        crate::media::MediaPlaceholderRows::try_from(3).expect("non-zero placeholder height");
+
+    let rich =
+        app.render_transcript_media_layout_for_reflow(/*width*/ 40, Some(placeholder_rows));
+    let fallback = app.render_transcript_media_layout_for_reflow(
+        /*width*/ 40, /*image_placeholder_rows*/ None,
+    );
+
+    assert_eq!(rich.placements.len(), 1);
+    assert_eq!(rich.placements[0].rect.height, 3);
+    assert!(rich.lines.len() > fallback.lines.len());
+    assert!(fallback.placements.is_empty());
+    assert!(
+        fallback
+            .lines
+            .iter()
+            .any(|line| rendered_line_text(line).contains("[image: diagram]"))
+    );
+    assert!(
+        rich.lines
+            .iter()
+            .chain(&fallback.lines)
+            .flat_map(|line| &line.line.spans)
+            .all(|span| !span.content.contains('\x1b'))
+    );
+    assert!(
+        app.transcript_cells[0]
+            .raw_lines()
+            .iter()
+            .flat_map(|line| &line.spans)
+            .all(|span| !span.content.contains('\x1b'))
+    );
+}
+
+#[tokio::test]
+async fn tui_capability_override_reaches_committed_history_owner() -> Result<()> {
+    let mut app = make_test_app().await;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let placeholder_rows =
+        crate::media::MediaPlaceholderRows::try_from(3).expect("non-zero placeholder height");
+    tui.set_chat_media_capability_override(Some(placeholder_rows));
+    let cell = AgentMarkdownCell::new(
+        "![diagram](D:/course/diagram.png)".to_string(),
+        std::path::Path::new("/tmp"),
+    );
+
+    app.insert_history_cell_lines(&mut tui, &cell, /*width*/ 40);
+
+    assert_eq!(
+        tui.pending_history_media_placements(),
+        vec![crate::media::MediaPlacementRequest {
+            node: crate::media::MediaNode::Image {
+                source: "D:/course/diagram.png".to_string(),
+                alt: "diagram".to_string(),
+                ordinal: 0,
+            },
+            rect: ratatui::layout::Rect::new(
+                /*x*/ 2, /*y*/ 0, /*width*/ 38, /*height*/ 3,
+            ),
+        }]
+    );
+    Ok(())
 }
 
 #[tokio::test]

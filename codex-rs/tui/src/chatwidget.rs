@@ -715,6 +715,8 @@ pub(crate) struct ChatWidget {
     // Runtime metrics accumulated across delta snapshots for the active turn.
     turn_runtime_metrics: RuntimeMetricsSummary,
     last_rendered_width: std::cell::Cell<Option<u16>>,
+    media_placeholder_rows: std::cell::Cell<Option<crate::media::MediaPlaceholderRows>>,
+    media_placement_requests: std::cell::RefCell<Vec<crate::media::MediaPlacementRequest>>,
     // Feedback sink for /feedback
     feedback: codex_feedback::CodexFeedback,
     // Current session rollout path (if known)

@@ -843,6 +843,8 @@ impl App {
     }
 
     fn render_chat_widget_frame(&mut self, tui: &mut tui::Tui, screen_size: Size) -> Result<Rect> {
+        self.chat_widget
+            .begin_media_frame(tui.chat_media_placeholder_rows());
         let dashboard_visible = self
             .chat_widget
             .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID)
@@ -855,25 +857,30 @@ impl App {
             self.schedule_immediate_resize_reflow(tui);
             self.maybe_run_resize_reflow(tui, screen_size)?;
         }
-        self.with_chat_widget_frame(screen_size.width, |desired_height, chat_widget| {
-            let desired_height = if dashboard_visible {
-                screen_size.height
-            } else {
-                desired_height
-            };
-            let mut rendered_area = Rect::default();
-            tui.draw_with_resize_reflow(desired_height, screen_size, |frame| {
-                let area = frame.area();
-                rendered_area = area;
-                chat_widget.render(area, frame.buffer);
-                self.chat_widget.note_rendered_width(area.width);
-                if let Some((x, y)) = chat_widget.cursor_pos(area) {
-                    frame.set_cursor_style(chat_widget.cursor_style(area));
-                    frame.set_cursor_position((x, y));
-                }
-            })?;
-            Ok(rendered_area)
-        })
+        let rendered_area = self.with_chat_widget_frame(
+            screen_size.width,
+            |desired_height, chat_widget| -> Result<Rect> {
+                let desired_height = if dashboard_visible {
+                    screen_size.height
+                } else {
+                    desired_height
+                };
+                let mut rendered_area = Rect::default();
+                tui.draw_with_resize_reflow(desired_height, screen_size, |frame| {
+                    let area = frame.area();
+                    rendered_area = area;
+                    chat_widget.render(area, frame.buffer);
+                    self.chat_widget.note_rendered_width(area.width);
+                    if let Some((x, y)) = chat_widget.cursor_pos(area) {
+                        frame.set_cursor_style(chat_widget.cursor_style(area));
+                        frame.set_cursor_position((x, y));
+                    }
+                })?;
+                Ok(rendered_area)
+            },
+        )?;
+        tui.replace_active_media_placements(self.chat_widget.take_media_placement_requests());
+        Ok(rendered_area)
     }
 
     fn with_chat_widget_frame<T>(

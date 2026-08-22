@@ -280,6 +280,8 @@ impl App {
 
         // Drop queued history insertions so stale transcript lines cannot be flushed after /clear.
         tui.clear_pending_history_lines();
+        tui.replace_active_media_placements(Vec::new());
+        tui.replace_history_media_placements(Vec::new());
 
         if is_alt_screen_active {
             tui.terminal.clear_visible_screen()?;
