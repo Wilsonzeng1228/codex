@@ -6,6 +6,14 @@ use codex_terminal_detection::TerminalName;
 use codex_terminal_detection::terminal_info;
 
 const ITERM2_KITTY_MIN_VERSION: (u64, u64, u64) = (3, 6, 0);
+const DEFAULT_CHAT_MEDIA_PLACEHOLDER_ROWS: u16 = 4;
+const MAX_CHAT_MEDIA_PLACEHOLDER_ROWS: u16 = 32;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ChatMediaCapability {
+    pub(crate) protocol: ImageProtocol,
+    pub(crate) placeholder_rows: crate::media::MediaPlaceholderRows,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ImageProtocol {
@@ -48,6 +56,33 @@ pub(crate) fn detect_image_support() -> ImageSupport {
     }
 
     image_support_for_terminal(&terminal_info())
+}
+
+pub(crate) fn chat_media_capability_override_from_env() -> Option<ChatMediaCapability> {
+    let protocol = env::var("CODEX_TUI_MEDIA_CAPABILITY_OVERRIDE").ok();
+    let placeholder_rows = env::var("CODEX_TUI_MEDIA_PLACEHOLDER_ROWS").ok();
+    parse_chat_media_capability_override(protocol.as_deref(), placeholder_rows.as_deref())
+}
+
+pub(crate) fn parse_chat_media_capability_override(
+    protocol: Option<&str>,
+    placeholder_rows: Option<&str>,
+) -> Option<ChatMediaCapability> {
+    let protocol = match protocol {
+        Some("kitty") => ImageProtocol::Kitty,
+        _ => return None,
+    };
+    let placeholder_rows = match placeholder_rows {
+        Some(rows) => rows.parse::<u16>().ok()?,
+        None => DEFAULT_CHAT_MEDIA_PLACEHOLDER_ROWS,
+    };
+    let placeholder_rows =
+        (placeholder_rows <= MAX_CHAT_MEDIA_PLACEHOLDER_ROWS).then_some(placeholder_rows)?;
+    let placeholder_rows = crate::media::MediaPlaceholderRows::try_from(placeholder_rows).ok()?;
+    Some(ChatMediaCapability {
+        protocol,
+        placeholder_rows,
+    })
 }
 
 pub(crate) fn image_support_for_terminal(info: &TerminalInfo) -> ImageSupport {

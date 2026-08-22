@@ -716,7 +716,7 @@ pub(crate) struct ChatWidget {
     turn_runtime_metrics: RuntimeMetricsSummary,
     last_rendered_width: std::cell::Cell<Option<u16>>,
     media_placeholder_rows: std::cell::Cell<Option<crate::media::MediaPlaceholderRows>>,
-    media_placement_requests: std::cell::RefCell<Vec<crate::media::MediaPlacementRequest>>,
+    media_placement_requests: std::cell::RefCell<Vec<crate::media::AnchoredMediaPlacementRequest>>,
     // Feedback sink for /feedback
     feedback: codex_feedback::CodexFeedback,
     // Current session rollout path (if known)

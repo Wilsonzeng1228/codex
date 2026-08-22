@@ -105,6 +105,8 @@ fn should_emit_notification(condition: NotificationCondition, terminal_focused: 
 
 impl Drop for Tui {
     fn drop(&mut self) {
+        self.replace_active_media_placements(Vec::new());
+        self.replace_history_media_placements(Vec::new());
         if let Err(err) = self.clear_ambient_pet_image() {
             tracing::debug!(error = %err, "failed to clear ambient pet image on TUI drop");
         }
@@ -583,6 +585,7 @@ pub struct Tui {
     pub(crate) terminal: Terminal,
     pending_history_lines: Vec<PendingHistoryLines>,
     chat_media_placeholder_rows: Option<crate::media::MediaPlaceholderRows>,
+    chat_media_protocol: Option<crate::media::ImageProtocol>,
     media_placements: crate::media::MediaPlacementRegistry,
     screen_size: ScreenSizePolicy,
     ambient_pet_image_state: crate::pets::PetImageRenderState,
@@ -606,8 +609,15 @@ pub struct Tui {
 
 struct PendingHistoryLines {
     lines: Vec<HyperlinkLine>,
-    placements: Vec<crate::media::MediaPlacementRequest>,
+    placements: Vec<crate::media::AnchoredMediaPlacementRequest>,
+    placement_mode: PendingMediaPlacementMode,
     wrap_policy: HistoryLineWrapPolicy,
+}
+
+#[derive(Debug)]
+enum PendingMediaPlacementMode {
+    Append,
+    ReplaceScope(Vec<crate::media::MediaCellId>),
 }
 
 fn clear_for_viewport_change<B>(terminal: &mut CustomTerminal<B>, new_area: Rect) -> Result<()>
@@ -635,6 +645,7 @@ impl Tui {
         supports_color::on_cached(supports_color::Stream::Stdout);
         let _ = crate::terminal_palette::default_colors();
         let scrollback = ScrollbackStrategy::detect(&codex_terminal_detection::terminal_info());
+        let chat_media_capability = crate::media::chat_media_capability_override_from_env();
 
         Self {
             frame_requester,
@@ -642,7 +653,9 @@ impl Tui {
             event_broker: Arc::new(EventBroker::new()),
             terminal,
             pending_history_lines: vec![],
-            chat_media_placeholder_rows: None,
+            chat_media_placeholder_rows: chat_media_capability
+                .map(|capability| capability.placeholder_rows),
+            chat_media_protocol: chat_media_capability.map(|capability| capability.protocol),
             media_placements: crate::media::MediaPlacementRegistry::default(),
             screen_size: ScreenSizePolicy::default(),
             ambient_pet_image_state: crate::pets::PetImageRenderState::default(),
@@ -873,6 +886,7 @@ impl Tui {
     ) {
         self.insert_history_media_layout_with_wrap_policy(
             crate::media::MediaLayout::text_only(lines),
+            /*media_cell_id*/ None,
             wrap_policy,
         );
     }
@@ -880,6 +894,7 @@ impl Tui {
     pub(crate) fn insert_history_media_layout_with_wrap_policy(
         &mut self,
         mut layout: crate::media::MediaLayout,
+        media_cell_id: Option<crate::media::MediaCellId>,
         wrap_policy: HistoryLineWrapPolicy,
     ) {
         if layout.lines.is_empty() {
@@ -887,20 +902,61 @@ impl Tui {
         }
         if let Some(last) = self.pending_history_lines.last_mut()
             && last.wrap_policy == wrap_policy
+            && matches!(&last.placement_mode, PendingMediaPlacementMode::Append)
         {
             let y_offset = u16::try_from(last.lines.len()).unwrap_or(u16::MAX);
             for placement in &mut layout.placements {
                 placement.rect.y = placement.rect.y.saturating_add(y_offset);
             }
             last.lines.extend(layout.lines);
-            last.placements.extend(layout.placements);
+            if let Some(media_cell_id) = media_cell_id {
+                last.placements
+                    .extend(layout.placements.into_iter().map(|placement| {
+                        crate::media::AnchoredMediaPlacementRequest::new(media_cell_id, placement)
+                    }));
+            }
         } else {
+            let placements = if let Some(media_cell_id) = media_cell_id {
+                layout
+                    .placements
+                    .into_iter()
+                    .map(|placement| {
+                        crate::media::AnchoredMediaPlacementRequest::new(media_cell_id, placement)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             self.pending_history_lines.push(PendingHistoryLines {
                 lines: layout.lines,
-                placements: layout.placements,
+                placements,
+                placement_mode: PendingMediaPlacementMode::Append,
                 wrap_policy,
             });
         }
+        self.frame_requester().schedule_frame();
+    }
+
+    pub(crate) fn insert_reflowed_history_media_layout_with_wrap_policy(
+        &mut self,
+        lines: Vec<HyperlinkLine>,
+        placements: Vec<crate::media::AnchoredMediaPlacementRequest>,
+        rebuilt_media_cells: Vec<crate::media::MediaCellId>,
+        wrap_policy: HistoryLineWrapPolicy,
+    ) {
+        if lines.is_empty() {
+            let update = self
+                .media_placements
+                .replace_history_scope(&rebuilt_media_cells, Vec::new());
+            self.write_chat_media_update(&update);
+            return;
+        }
+        self.pending_history_lines.push(PendingHistoryLines {
+            lines,
+            placements,
+            placement_mode: PendingMediaPlacementMode::ReplaceScope(rebuilt_media_cells),
+            wrap_policy,
+        });
         self.frame_requester().schedule_frame();
     }
 
@@ -918,12 +974,14 @@ impl Tui {
         image_placeholder_rows: Option<crate::media::MediaPlaceholderRows>,
     ) {
         self.chat_media_placeholder_rows = image_placeholder_rows;
+        self.chat_media_protocol =
+            image_placeholder_rows.map(|_| crate::media::ImageProtocol::Kitty);
     }
 
     #[cfg(test)]
     pub(crate) fn pending_history_media_placements(
         &self,
-    ) -> Vec<crate::media::MediaPlacementRequest> {
+    ) -> Vec<crate::media::AnchoredMediaPlacementRequest> {
         self.pending_history_lines
             .iter()
             .flat_map(|batch| batch.placements.iter().cloned())
@@ -932,16 +990,33 @@ impl Tui {
 
     pub(crate) fn replace_active_media_placements(
         &mut self,
-        placements: Vec<crate::media::MediaPlacementRequest>,
+        placements: Vec<crate::media::AnchoredMediaPlacementRequest>,
     ) -> crate::media::MediaPlacementUpdate {
-        self.media_placements.replace_active(placements)
+        let update = self.media_placements.replace_active(placements);
+        self.write_chat_media_update(&update);
+        update
     }
 
     pub(crate) fn replace_history_media_placements(
         &mut self,
-        placements: Vec<crate::media::MediaPlacementRequest>,
+        placements: Vec<crate::media::AnchoredMediaPlacementRequest>,
     ) -> crate::media::MediaPlacementUpdate {
-        self.media_placements.replace_history(placements)
+        let update = self.media_placements.replace_history(placements);
+        self.write_chat_media_update(&update);
+        update
+    }
+
+    fn write_chat_media_update(&mut self, update: &crate::media::MediaPlacementUpdate) {
+        let Some(protocol) = self.chat_media_protocol else {
+            return;
+        };
+        if let Err(error) = crate::media::write_kitty_placement_update(
+            self.terminal.backend_mut(),
+            protocol,
+            update,
+        ) {
+            tracing::warn!(%error, "failed to update chat media placements");
+        }
     }
 
     /// Resize the inline viewport for the resize-reflow path.
@@ -991,6 +1066,7 @@ impl Tui {
         terminal: &mut Terminal,
         pending_history_lines: &mut Vec<PendingHistoryLines>,
         media_placements: &mut crate::media::MediaPlacementRegistry,
+        chat_media_protocol: Option<crate::media::ImageProtocol>,
         scrollback: ScrollbackStrategy,
         screen_size: Size,
     ) -> Result<()> {
@@ -1000,14 +1076,39 @@ impl Tui {
 
         for batch in pending_history_lines.iter() {
             let mode = scrollback.history_insertion_mode(batch.wrap_policy);
-            crate::insert_history::insert_history_hyperlink_lines_with_mode_and_wrap_policy(
+            let update = match &batch.placement_mode {
+                PendingMediaPlacementMode::Append => {
+                    media_placements.append_history(batch.placements.clone())
+                }
+                PendingMediaPlacementMode::ReplaceScope(scope) => {
+                    media_placements.replace_history_scope(scope, batch.placements.clone())
+                }
+            };
+            let prepared = chat_media_protocol.and_then(|protocol| {
+                match crate::media::prepare_kitty_placement_update(protocol, &update) {
+                    Ok(prepared) => Some(prepared),
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to prepare history media placements");
+                        None
+                    }
+                }
+            });
+            if let Some(prepared) = &prepared {
+                for command in &prepared.deletions {
+                    terminal.backend_mut().write_all(command.as_bytes())?;
+                }
+            }
+            crate::insert_history::insert_history_hyperlink_lines_with_media_and_mode_and_wrap_policy(
                 terminal,
                 &batch.lines,
+                prepared
+                    .as_ref()
+                    .map(|prepared| prepared.placements.as_slice())
+                    .unwrap_or_default(),
                 mode,
                 batch.wrap_policy,
                 screen_size,
             )?;
-            media_placements.append_history(batch.placements.clone());
         }
         pending_history_lines.clear();
         Ok(())
@@ -1068,6 +1169,7 @@ impl Tui {
                 terminal,
                 &mut self.pending_history_lines,
                 &mut self.media_placements,
+                self.chat_media_protocol,
                 self.scrollback,
                 screen_size,
             )?;
@@ -1189,6 +1291,7 @@ impl Tui {
                 terminal,
                 &mut self.pending_history_lines,
                 &mut self.media_placements,
+                self.chat_media_protocol,
                 self.scrollback,
                 screen_size,
             )?;

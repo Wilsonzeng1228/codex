@@ -45,6 +45,7 @@ impl From<ratatui::layout::Size> for TerminalWidth {
 struct ReflowCellDisplay {
     lines: Vec<HyperlinkLine>,
     placements: Vec<crate::media::MediaPlacementRequest>,
+    media_cell_id: Option<crate::media::MediaCellId>,
     is_stream_continuation: bool,
 }
 
@@ -55,7 +56,8 @@ struct ReflowCellDisplay {
 /// rows here are a transient render product for a single terminal width.
 pub(super) struct ReflowRenderResult {
     pub(super) lines: Vec<HyperlinkLine>,
-    pub(super) placements: Vec<crate::media::MediaPlacementRequest>,
+    pub(super) placements: Vec<crate::media::AnchoredMediaPlacementRequest>,
+    pub(super) rebuilt_media_cells: Vec<crate::media::MediaCellId>,
 }
 
 pub(super) fn trailing_run_start<T: 'static>(transcript_cells: &[Arc<dyn HistoryCell>]) -> usize {
@@ -128,6 +130,7 @@ impl App {
         } else {
             tui.insert_history_media_layout_with_wrap_policy(
                 layout,
+                cell.media_cell_id(),
                 self.history_line_wrap_policy(),
             );
         }
@@ -500,18 +503,13 @@ impl App {
         // Drop any queued pre-resize/pre-consolidation inserts before rebuilding from cells.
         tui.clear_pending_history_lines();
         self.clear_terminal_for_resize_replay(tui)?;
-        tui.replace_history_media_placements(Vec::new());
-
         self.deferred_history_lines.clear();
-        if !reflowed_lines.is_empty() {
-            tui.insert_history_media_layout_with_wrap_policy(
-                crate::media::MediaLayout {
-                    lines: reflowed_lines,
-                    placements: reflow_result.placements,
-                },
-                self.history_line_wrap_policy(),
-            );
-        }
+        tui.insert_reflowed_history_media_layout_with_wrap_policy(
+            reflowed_lines,
+            reflow_result.placements,
+            reflow_result.rebuilt_media_cells,
+            self.history_line_wrap_policy(),
+        );
         self.last_rendered_history_tail =
             self.transcript_cells
                 .last()
@@ -576,6 +574,7 @@ impl App {
             ReflowRenderResult {
                 lines: Vec::new(),
                 placements: Vec::new(),
+                rebuilt_media_cells: Vec::new(),
             }
         } else {
             self.render_transcript_media_layout_for_reflow(width, tui.chat_media_placeholder_rows())
@@ -583,18 +582,13 @@ impl App {
 
         tui.clear_pending_history_lines();
         self.clear_terminal_for_resize_replay(tui)?;
-        tui.replace_history_media_placements(Vec::new());
-
         self.deferred_history_lines.clear();
-        if !reflow_result.lines.is_empty() {
-            tui.insert_history_media_layout_with_wrap_policy(
-                crate::media::MediaLayout {
-                    lines: reflow_result.lines,
-                    placements: reflow_result.placements,
-                },
-                self.history_line_wrap_policy(),
-            );
-        }
+        tui.insert_reflowed_history_media_layout_with_wrap_policy(
+            reflow_result.lines,
+            reflow_result.placements,
+            reflow_result.rebuilt_media_cells,
+            self.history_line_wrap_policy(),
+        );
 
         Ok(())
     }
@@ -634,6 +628,7 @@ impl App {
             cell_displays.push_front(ReflowCellDisplay {
                 lines,
                 placements: layout.placements,
+                media_cell_id: cell.media_cell_id(),
                 is_stream_continuation: cell.is_stream_continuation(),
             });
 
@@ -658,6 +653,7 @@ impl App {
             cell_displays.push_front(ReflowCellDisplay {
                 lines: layout.lines,
                 placements: layout.placements,
+                media_cell_id: cell.media_cell_id(),
                 is_stream_continuation: cell.is_stream_continuation(),
             });
         }
@@ -665,6 +661,7 @@ impl App {
         let mut has_emitted_history_lines = false;
         let mut reflowed_lines = Vec::new();
         let mut placements = Vec::new();
+        let mut rebuilt_media_cells = Vec::new();
         for display in cell_displays {
             if !display.lines.is_empty() && !display.is_stream_continuation {
                 if has_emitted_history_lines {
@@ -674,10 +671,13 @@ impl App {
                 }
             }
             let cell_y = u16::try_from(reflowed_lines.len()).unwrap_or(u16::MAX);
-            placements.extend(display.placements.into_iter().map(|mut placement| {
-                placement.rect.y = placement.rect.y.saturating_add(cell_y);
-                placement
-            }));
+            if let Some(media_cell_id) = display.media_cell_id {
+                rebuilt_media_cells.push(media_cell_id);
+                placements.extend(display.placements.into_iter().map(|mut placement| {
+                    placement.rect.y = placement.rect.y.saturating_add(cell_y);
+                    crate::media::AnchoredMediaPlacementRequest::new(media_cell_id, placement)
+                }));
+            }
             reflowed_lines.extend(display.lines);
         }
         if let Some(max_rows) = row_cap
@@ -696,13 +696,14 @@ impl App {
         trim_media_placements_front(&mut placements, drained_rows);
         let prefixed_rows = u16::try_from(prefixed_rows).unwrap_or(u16::MAX);
         for placement in &mut placements {
-            placement.rect.y = placement.rect.y.saturating_add(prefixed_rows);
+            placement.request.rect.y = placement.request.rect.y.saturating_add(prefixed_rows);
         }
         self.has_emitted_history_lines = !reflowed_lines.is_empty();
 
         ReflowRenderResult {
             lines: reflowed_lines,
             placements,
+            rebuilt_media_cells,
         }
     }
 
@@ -757,18 +758,18 @@ impl App {
 }
 
 fn trim_media_placements_front(
-    placements: &mut Vec<crate::media::MediaPlacementRequest>,
+    placements: &mut Vec<crate::media::AnchoredMediaPlacementRequest>,
     trimmed_rows: usize,
 ) {
     let trimmed_rows = u16::try_from(trimmed_rows).unwrap_or(u16::MAX);
     placements.retain_mut(|placement| {
-        let bottom = placement.rect.bottom();
+        let bottom = placement.request.rect.bottom();
         if bottom <= trimmed_rows {
             return false;
         }
-        let top = placement.rect.y.max(trimmed_rows);
-        placement.rect.y = top - trimmed_rows;
-        placement.rect.height = bottom - top;
+        let top = placement.request.rect.y.max(trimmed_rows);
+        placement.request.rect.y = top - trimmed_rows;
+        placement.request.rect.height = bottom - top;
         true
     });
 }

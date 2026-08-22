@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
 > 更新时间：2026-08-22
-> 当前状态：Phase 1 进行中；已经完成图片语法、来源校验、协议抽象、媒体节点、布局请求、测试 capability override 与 placement 生命周期基础设施，尚未把真实位图显示到聊天消息中。
+> 当前状态：Phase 1 进行中；已经完成图片语法、来源校验、协议抽象、媒体节点、稳定 placement 生命周期、可注入终端 writer 和显式生产 capability override。静态本地 PNG 已能进入 Kitty 写入路径，但尚未在真实 WezTerm 中完成视觉验收，因此不能宣称聊天图片显示完成。
 
 ## 新对话启动指令
 
@@ -97,17 +97,21 @@ ef185a27b3 feat: 为 Markdown 图片增加显式文本降级
 - 新增非零强类型 `MediaPlaceholderRows` 和 `MediaPlacementRequest { node, rect }`。
 - 对合法、非表格内的 Markdown 图片，可显式预留 N 行，并以 `MediaNode.ordinal` 稳定记录 cell-relative `Rect`。
 - 活跃消息绘制和历史 scrollback/reflow 已切到同一个 `HistoryCell::display_media_layout*` 入口。
-- capability 未启用时，生产入口继续传入 `None`，因此用户可见行为仍是安全的文本降级；尚未发送 Kitty/Sixel 字节，也没有图片 I/O。
+- capability 未启用时，生产入口继续传入 `None`，因此用户可见行为仍是安全的文本降级；只有后续新增的显式 override 才会启用 Kitty 写入路径。
 
 ### 3.6 capability override 与 placement 生命周期基础设施
 
 - `Tui` 是聊天媒体生命周期所有者，持有 capability 状态和 `MediaPlacementRegistry`。
-- 注册表把 active frame 与 history scrollback 分成两个域；active 每帧替换，history 在提交时追加，在 clear、resize/reflow 或历史尾替换时清理/重建。
+- `AgentMarkdownCell` 持有进程内稳定的 `MediaCellId`，图片以 `(MediaCellId, ordinal)` 形成 `MediaAnchor`；active redraw、active→history 提交和 resize/reflow 可以复用同一个强类型 `MediaId`。
+- 注册表把 active frame 与 history scrollback 分成两个域；active 每帧 reconcile，history 提交时提升/追加。resize/reflow 只替换本次重建 cell 的 scope，不再全量删除更老的 terminal scrollback placement。
 - active transcript 绘制会把 cell-relative placement 裁剪、滚动并转换成 frame 绝对坐标，再交回 `Tui`。
 - history 插入、初始 replay 和 resize/reflow 会携带 `MediaLayout.placements`，并同步处理 cell 分隔行、前端裁剪和历史提示行造成的 Y 偏移。
-- capability override 当前仅在测试中可注入，生产默认仍为 `None`；它证明真实布局入口能预留非零图片高度，但不会依赖真实终端。
+- active placement 通过可注入 writer 使用 frame 绝对 `Rect`；history placement 在对应保留行写入 terminal scrollback 时只移动列并立即发送，避免把历史图片绑定到易变化的屏幕绝对 Y。
+- `MediaPlacementUpdate` 已接到现有 `kitty_transmit_png_*` 和 `kitty_delete_image` 抽象；删除先于重放，redraw、resize/reflow、历史清理和 TUI drop 都有明确 retirement 路径。
+- 生产环境可显式设置 `CODEX_TUI_MEDIA_CAPABILITY_OVERRIDE=kitty`；占位行由 `CODEX_TUI_MEDIA_PLACEHOLDER_ROWS` 指定，合法范围 1–32，默认 4。未显式启用时仍为 `None`，不会发送聊天媒体协议字节。
+- writer 当前只接受本地来源且要求 8 字节 PNG magic；HTTPS、拒绝来源和伪 PNG 均继续文本降级。协议字节只写入终端 sink，不进入 Ratatui `Line`、raw Markdown、复制文本或持久化 transcript。
 - 注册表的更新结果显式给出 `retired` 与 `added` MediaId，为后续复用 Kitty 删除/发送接口提供边界。
-- 当前没有消费这些更新去发送终端协议字节。删除/重建已在状态模型中完成，但真实终端副作用必须等 scrollback 锚定方案得到证明后再接入。
+- 状态模型和终端副作用层已经接通，但真实终端的滚动、回流和 terminal-specific Kitty 行为尚未视觉验收。
 
 ## 4. 当前架构判断
 
@@ -119,7 +123,7 @@ ef185a27b3 feat: 为 Markdown 图片增加显式文本降级
 - 活跃消息和已提交历史现在共享布局语义与 `Tui` 生命周期注册表，但终端坐标锚定仍未得到真实终端证明；
 - Kitty 控制序列只能作为终端副作用发送，禁止写入原始 Markdown、复制文本或持久化 `Line`。
 
-如果 Kitty 直接 placement 无法可靠锚定 scrollback，应评估 Kitty Unicode placeholders，或调整为由 alternate screen 统一绘制可见 transcript。不要先盲发控制序列再补生命周期。
+当前基础设施采用双路径：active 使用当前 frame 绝对坐标，history 在其保留行进入 terminal scrollback 的同一时刻发送 placement。单元测试证明 history 路径不使用绝对屏幕 Y，scoped reflow 也不会删除更老 placement；但这些只能降低架构风险，仍不能替代真实 WezTerm 的滚动与 resize 验收。若真实终端无法让 direct placement 随 scrollback 可靠移动，应评估 Kitty Unicode placeholders，或调整为由 alternate screen 统一绘制可见 transcript。
 
 ## 5. 关键文件
 
@@ -189,12 +193,30 @@ just test -p codex-tui history_cell::messages::tests             10/10
 just test -p codex-tui tui::history_tail::tests                   3/3
 ```
 
+本轮新增 lifecycle/writer 定向证据：
+
+```text
+just test -p codex-tui explicit_chat_media_override              1/1
+just test -p codex-tui media::                                   15/15
+just test -p codex-tui history_media_is_emitted_on_its_reserved_row 1/1
+just test -p codex-tui app::resize_reflow::tests                 11/11
+just test -p codex-tui chatwidget::rendering::tests               8/8
+just test -p codex-tui tui::history_tail::tests                   3/3
+just test -p codex-tui markdown_image_fallback                    2/2
+just test -p codex-tui finalized_markdown_media_layout_reserves_rows_at_each_image_ordinal 1/1
+```
+
 验证边界：
 
 - 本轮布局测试先确认缺少布局类型和接口的 RED，再做最小实现并确认 GREEN。
 - lifecycle 本轮 RED 分两步确认：第一次因缺少 `media/placement.rs` 无法编译；补最小类型后，仍因缺少 `render_transcript_media_layout_for_reflow`、`ChatWidget::begin_media_frame` 和 `take_media_placement_requests` 无法编译。随后才接入生产布局路径并确认 GREEN。
-- 本轮完整 `just test -p codex-tui` 共运行 3745 项，3743 项通过、2 项失败、10 项跳过；失败仍是未修改的项目权限历史测试（断言得到 `../trusted`）和 pets Kitty 本地文件测试（Base64 输出包含 `cG5n`）。它们与上一轮基线一致，未为消错扩大修改范围。
+- stable anchor RED 因缺少 `AnchoredMediaPlacementRequest`、`MediaCellId`、`replace_history_scope` 和新的 placement 更新字段而无法编译；最小实现后 `media::placement_tests` 4/4 GREEN。
+- injected writer RED 因缺少 `terminal_writer` 模块而无法编译；接入现有 Kitty transmit/delete 抽象后 writer 定向测试 GREEN。
+- history insertion-time anchor RED 因缺少 `PreparedKittyPlacement` 和 history row writer 而无法编译；实现后确认 placement 只移动列、不写绝对屏幕 Y。
+- 静态 PNG 限制的 RED 明确失败在 `assertion failed: output.is_empty()`，证明旧 writer 会发送伪 PNG；加入 8 字节 PNG signature 检查后 GREEN。
+- 本轮完整 `just test -p codex-tui` 共运行 3752 项，3750 项通过、2 项失败、10 项跳过；失败仍是未修改的项目权限历史测试（断言得到 `../trusted`）和 pets Kitty 本地文件测试（Base64 输出包含 `cG5n`）。它们与上一轮基线一致，未为消错扩大修改范围。
 - 用户在 PowerShell 中手动确认了图片文本降级、拒绝来源提示和原始 Markdown 复制；随后定向运行 `markdown_image_fallback` 2/2、`finalized_markdown_media_layout_reserves_rows_at_each_image_ordinal` 1/1，均通过。
+- `just fix -p codex-tui` 以退出码 0 完成；本轮新增的冗余 clone warning 已消除，仅剩未修改的 `pets/mod.rs` 两条既有 `expect_used` warning。
 - Rust `cargo fmt --all -- --check` 通过，但稳定版会提示 `imports_granularity=Item` 需要 nightly；这不是格式化失败。
 - 完整 `just fmt` 在 Bazel/Starlark 步骤失败，因为 Windows 上找不到/无法下载 `tools/buildifier`，错误为 `[WinError 2]`；不能宣称完整格式检查通过。
 - `cargo insta pending-snapshots -p codex-tui` 无法执行，因为当前环境没有安装 `cargo-insta` 子命令。
@@ -213,13 +235,15 @@ $env:GIT_CONFIG_VALUE_0=''
 $env:GIT_CONFIG_KEY_1='https.proxy'
 $env:GIT_CONFIG_VALUE_1=''
 $env:CARGO_BUILD_JOBS='1'
+$env:CARGO_INCREMENTAL='0'
 ```
 
 环境事实：
 
 - 可用物理内存约 4 GB；并行编译曾在 `protoc-bin-vendored` 附近异常失败，`CARGO_BUILD_JOBS=1` 是必要条件。
 - TUI 重新链接常需 2–3 分钟，长时间无输出不等于挂死。
-- 最近检查 D 盘剩余约 36.1 GB。
+- `codex-rs/target` 曾增长到 33.13 GiB，其中 17.77 GiB 是 incremental；已用 `cargo clean` 释放 33.1 GiB，并在根 `AGENTS.md` 写入 20 GiB 硬红线、18 GiB 预警和清理纪律。
+- 后续本地 Rust 命令必须设置 `CARGO_INCREMENTAL=0` 并在命令前后检查 `codex-rs/target`；不得并发启动多套构建。本轮完整测试和 Clippy 后最终占用为 10.76 GiB，仍低于红线。
 - Rust 为项目锁定的 1.95；`just` 1.58；`cargo-nextest` 0.9.143。
 - 当前机器未安装 WezTerm、Kitty、CMake、Ninja。
 - 在安装或由用户提供 WezTerm 前，无法完成真实终端图片验收。
@@ -237,15 +261,14 @@ $env:CARGO_BUILD_JOBS='1'
 
 本轮已用测试 capability override 让 active 与 history 生产布局入口传入非零占位高度，并把 `MediaLayout.placements` 交给 `Tui` 所有的统一注册表。生产默认仍为 `None`，因此没有改变当前文本降级行为，也没有直接向终端盲发协议字节。
 
-### 8.2 下一步：证明 scrollback 锚定并接入静态本地 PNG
+### 8.2 当前完成：scrollback 锚定基础设施与静态本地 PNG writer
 
-- 在真实 WezTerm/Kitty 协议终端验证：active frame 的绝对坐标和 terminal scrollback 的历史坐标是否能使用同一 placement 机制；
-- 把注册表的 `retired`/`added` 更新接到终端副作用层，redraw、resize、scroll、会话切换、退出时调用现有删除接口；
-- 先只处理静态本地 PNG；
-- 复用现有 `media::kitty_transmit_png_*`，不要复制控制序列；
-- 增加真实 writer 的可注入测试替身，验证发送与删除顺序，同时继续断言 `Line`、raw Markdown 和复制文本不含控制字节。
+- 注册表的 `retired`/`placed` 已接到终端副作用层，并复用现有 `media::kitty_transmit_png_*`/删除接口；
+- 可注入 writer 已验证删除顺序、active 绝对 `Rect`、远程来源跳过、伪 PNG 跳过和 request 不被协议字节污染；
+- history writer 在保留行进入 scrollback 时发送，只使用列定位；
+- scoped reflow 保留未参与本次重建的旧 scrollback placement。
 
-这一部分是 Phase 1 的架构风险点。若不能证明 placement 随 scrollback 正确移动，就不要把仅在当前帧看似正确的 overlay 当作完成。
+下一步必须在真实 WezTerm 中设置显式 override，验证 active→history、滚动、resize、redraw、消息移除和退出。若不能证明 placement 随 scrollback 正确移动，就不要把仅在当前帧看似正确的 overlay 当作完成。
 
 ### 8.3 再进入异步 I/O
 
@@ -261,12 +284,12 @@ $env:CARGO_BUILD_JOBS='1'
 
 ## 9. 尚未完成
 
-- 聊天区尚未显示真实位图；
+- 聊天区已经具备显式 override 下的静态本地 PNG Kitty 写入路径，但尚未通过真实终端视觉验收；
 - 尚未在 WezTerm 中做真实协议验收；
 - 尚无本地图片解码、缩放和缓存；
 - 尚无远程 HTTPS 下载器和 DNS 级 SSRF 防护；
 - Sixel 编码仍留在 pets 专用实现，尚未完全移入通用媒体层；
-- 媒体节点尚未记录源字节范围；布局请求和生命周期注册表已接入，但尚未消费注册表更新去发送/删除真实协议 placement；
+- 媒体节点尚未记录源字节范围；生命周期更新已能发送/删除 Kitty placement，但本地文件仍在同步路径读取，尚无解码、缩放、缓存和资源上限；
 - LaTeX 渲染尚未开始；
 - 富媒体交互、配置开关、文档、最终打包尚未开始。
 
@@ -298,7 +321,7 @@ Windows 下 `git status --short` 当前会显示：
 - TUI 测试优先 `just test -p codex-tui <filter>`；
 - 新行为必须先写失败测试，确认 RED 后做最小实现并确认 GREEN；
 - 本轮所有文件完成后统一提交，禁止 `git add .`；
-- 本轮建议提交信息：`feat: 建立聊天媒体放置生命周期`。
+- 本轮建议提交信息：`feat: 锚定聊天媒体到终端历史`。
 
 ## 11. 新对话的起手命令
 
@@ -322,7 +345,7 @@ Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\app\resize_reflow.rs
 Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\tui.rs
 ```
 
-从可注入终端媒体 writer 与 scrollback 锚定验证开始写下一条失败测试，不要重做已经完成的 capability override、布局请求或注册表。
+从真实 WezTerm smoke test 和滚动/resize 视觉验收开始；不要重做已经完成的 capability override、稳定 anchor、可注入 writer 或 history insertion-time 锚定。真实终端不通过时，先记录 direct placement 的具体失败模式，再决定是否切换 Kitty Unicode placeholders。
 
 ## 12. Phase 1 完成判据
 

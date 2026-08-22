@@ -61,6 +61,14 @@ In the codex-rs folder where the rust code lives:
     trivial; prefer new modules/files and keep `chatwidget.rs` focused on orchestration.
 - When running Rust commands (e.g. `just fix` or `just test`) be patient with the command and never try to kill them using the PID. Rust lock can make the execution slow, this is expected.
 
+## 本地存储空间红线
+
+- 本仓库的 `codex-rs/target` 是可重建的 Rust 构建产物，磁盘占用硬上限为 **20 GiB**。
+- 运行 `just test`、`just fix`、`cargo build` 或 `cargo run` 前后都要检查 `codex-rs/target` 的实际大小；不得在未检查剩余空间的情况下连续启动多套构建。
+- 本地 Rust 构建默认设置 `CARGO_INCREMENTAL=0`，避免 `target/debug/incremental` 长期膨胀。Windows PowerShell 示例：`$env:CARGO_INCREMENTAL='0'`。
+- 当 `codex-rs/target` 达到 **18 GiB** 时，停止启动新的构建并优先清理；确认没有 Cargo/Rust 链接进程后，可在 `codex-rs` 中运行 `cargo clean`。清理后必须复测占用并向用户报告释放量。
+- 只能清理可重建的构建缓存。禁止为释放空间删除源码、未提交修改、Git 对象或用户文件；不得触碰仓库外的旁路产物。
+
 Run `just fmt` (in the `codex-rs` directory) automatically after you have finished making code changes anywhere in this repository; do not ask for approval to run it. Additionally, run the tests:
 
 1. Do not run `cargo test` directly. Use `just test` so test execution follows the repo defaults.

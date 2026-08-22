@@ -6,6 +6,29 @@ use super::ImageProtocol;
 use super::ImageSupport;
 use super::ImageUnsupportedReason;
 use super::image_support_for_terminal;
+use super::parse_chat_media_capability_override;
+
+#[test]
+fn explicit_chat_media_override_is_bounded_and_disabled_by_default() {
+    let enabled = parse_chat_media_capability_override(Some("kitty"), Some("4"))
+        .expect("valid explicit Kitty override");
+
+    assert_eq!(enabled.protocol, ImageProtocol::Kitty);
+    assert_eq!(enabled.placeholder_rows.get(), 4);
+    assert_eq!(parse_chat_media_capability_override(None, None), None);
+    assert_eq!(
+        parse_chat_media_capability_override(Some("kitty"), Some("0")),
+        None
+    );
+    assert_eq!(
+        parse_chat_media_capability_override(Some("kitty"), Some("33")),
+        None
+    );
+    assert_eq!(
+        parse_chat_media_capability_override(Some("sixel"), Some("4")),
+        None
+    );
+}
 
 #[test]
 fn protocol_detection_is_shared_and_multiplexer_safe() {

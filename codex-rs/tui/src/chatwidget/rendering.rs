@@ -15,7 +15,9 @@ impl ChatWidget {
         self.media_placement_requests.borrow_mut().clear();
     }
 
-    pub(crate) fn take_media_placement_requests(&self) -> Vec<crate::media::MediaPlacementRequest> {
+    pub(crate) fn take_media_placement_requests(
+        &self,
+    ) -> Vec<crate::media::AnchoredMediaPlacementRequest> {
         std::mem::take(&mut *self.media_placement_requests.borrow_mut())
     }
 
@@ -127,7 +129,8 @@ struct TranscriptAreaRenderable<'a> {
     persistent_layout: Option<PersistentActiveCellLayout<'a>>,
     render_mode: HistoryRenderMode,
     image_placeholder_rows: Option<crate::media::MediaPlaceholderRows>,
-    media_placement_requests: &'a std::cell::RefCell<Vec<crate::media::MediaPlacementRequest>>,
+    media_placement_requests:
+        &'a std::cell::RefCell<Vec<crate::media::AnchoredMediaPlacementRequest>>,
 }
 
 struct PersistentActiveCellLayout<'a> {
@@ -246,6 +249,9 @@ impl TranscriptAreaRenderable<'_> {
         scroll_y: u16,
         placements: Vec<crate::media::MediaPlacementRequest>,
     ) {
+        let Some(media_cell_id) = self.child.media_cell_id() else {
+            return;
+        };
         let mut collected = self.media_placement_requests.borrow_mut();
         for mut placement in placements {
             let visible_top = placement.rect.y.saturating_sub(scroll_y);
@@ -264,7 +270,10 @@ impl TranscriptAreaRenderable<'_> {
                     .saturating_sub(placement.rect.x.saturating_sub(area.x)),
             );
             placement.rect.height = clipped_bottom - clipped_top;
-            collected.push(placement);
+            collected.push(crate::media::AnchoredMediaPlacementRequest::new(
+                media_cell_id,
+                placement,
+            ));
         }
     }
 }

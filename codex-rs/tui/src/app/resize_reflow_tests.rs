@@ -41,7 +41,7 @@ async fn explicit_media_capability_flows_through_scrollback_reflow_layout() {
     );
 
     assert_eq!(rich.placements.len(), 1);
-    assert_eq!(rich.placements[0].rect.height, 3);
+    assert_eq!(rich.placements[0].request.rect.height, 3);
     assert!(rich.lines.len() > fallback.lines.len());
     assert!(fallback.placements.is_empty());
     assert!(
@@ -77,20 +77,27 @@ async fn tui_capability_override_reaches_committed_history_owner() -> Result<()>
         "![diagram](D:/course/diagram.png)".to_string(),
         std::path::Path::new("/tmp"),
     );
+    let media_cell_id = cell.media_cell_id().expect("source-backed media cell id");
 
     app.insert_history_cell_lines(&mut tui, &cell, /*width*/ 40);
 
     assert_eq!(
         tui.pending_history_media_placements(),
-        vec![crate::media::MediaPlacementRequest {
-            node: crate::media::MediaNode::Image {
-                source: "D:/course/diagram.png".to_string(),
-                alt: "diagram".to_string(),
+        vec![crate::media::AnchoredMediaPlacementRequest {
+            anchor: crate::media::MediaAnchor {
+                cell_id: media_cell_id,
                 ordinal: 0,
             },
-            rect: ratatui::layout::Rect::new(
-                /*x*/ 2, /*y*/ 0, /*width*/ 38, /*height*/ 3,
-            ),
+            request: crate::media::MediaPlacementRequest {
+                node: crate::media::MediaNode::Image {
+                    source: "D:/course/diagram.png".to_string(),
+                    alt: "diagram".to_string(),
+                    ordinal: 0,
+                },
+                rect: ratatui::layout::Rect::new(
+                    /*x*/ 2, /*y*/ 0, /*width*/ 38, /*height*/ 3,
+                ),
+            },
         }]
     );
     Ok(())

@@ -220,6 +220,11 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
         &[]
     }
 
+    /// Returns the stable process-local identity used to anchor this cell's media placements.
+    fn media_cell_id(&self) -> Option<crate::media::MediaCellId> {
+        None
+    }
+
     /// Returns rich text plus cell-relative image placeholders for a media-capable draw path.
     ///
     /// The default preserves the normal text representation and requests no terminal side

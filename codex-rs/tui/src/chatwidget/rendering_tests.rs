@@ -91,7 +91,7 @@ async fn explicit_media_capability_reserves_active_rows_and_collects_placements(
     let placements = widget.take_media_placement_requests();
 
     assert_eq!(placements.len(), 1);
-    assert_eq!(placements[0].rect.height, 3);
+    assert_eq!(placements[0].request.rect.height, 3);
     assert!(frame.area.height >= 7);
     assert!(
         frame

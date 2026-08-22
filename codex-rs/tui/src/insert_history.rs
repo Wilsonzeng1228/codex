@@ -113,6 +113,27 @@ pub(crate) fn insert_history_hyperlink_lines_with_mode_and_wrap_policy<B>(
 where
     B: Backend<Error = io::Error> + Write,
 {
+    insert_history_hyperlink_lines_with_media_and_mode_and_wrap_policy(
+        terminal,
+        lines,
+        &[],
+        mode,
+        wrap_policy,
+        screen_size,
+    )
+}
+
+pub(crate) fn insert_history_hyperlink_lines_with_media_and_mode_and_wrap_policy<B>(
+    terminal: &mut crate::custom_terminal::Terminal<B>,
+    lines: &[HyperlinkLine],
+    media_placements: &[crate::media::PreparedKittyPlacement],
+    mode: InsertHistoryMode,
+    wrap_policy: HistoryLineWrapPolicy,
+    screen_size: Size,
+) -> io::Result<()>
+where
+    B: Backend<Error = io::Error> + Write,
+{
     let mut area = terminal.viewport_area;
     let mut should_update_area = false;
     let last_cursor_pos = terminal.last_known_cursor_pos;
@@ -129,7 +150,8 @@ where
     // - Non-URL lines also flow through adaptive wrapping; behavior is
     //   equivalent to standard wrapping when no URL is present.
     let wrap_width = area.width.max(1) as usize;
-    let (wrapped, wrapped_rows) = wrap_history_hyperlink_lines(lines, wrap_width, wrap_policy);
+    let (wrapped, wrapped_rows, logical_rows) =
+        wrap_history_hyperlink_lines_with_logical_rows(lines, wrap_width, wrap_policy);
     let wrapped_lines = wrapped_rows as u16;
     match mode {
         InsertHistoryMode::FullScreen => {
@@ -143,6 +165,13 @@ where
                     queue!(writer, Print("\r\n"))?;
                 }
                 write_history_line(writer, line, wrap_width)?;
+                if index == 0 || logical_rows[index - 1] != logical_rows[index] {
+                    write_history_media_for_logical_row(
+                        writer,
+                        logical_rows[index],
+                        media_placements,
+                    )?;
+                }
             }
 
             // Writing raw source text through the terminal preserves its soft-wrap metadata.
@@ -207,9 +236,16 @@ where
             // fetch/restore the cursor position. insert_history_lines should be cursor-position-neutral :)
             queue!(writer, MoveTo(/*x*/ 0, cursor_top))?;
 
-            for line in &wrapped {
+            for (index, line) in wrapped.iter().enumerate() {
                 queue!(writer, Print("\r\n"))?;
                 write_history_line(writer, line, wrap_width)?;
+                if index == 0 || logical_rows[index - 1] != logical_rows[index] {
+                    write_history_media_for_logical_row(
+                        writer,
+                        logical_rows[index],
+                        media_placements,
+                    )?;
+                }
             }
 
             queue!(writer, ResetScrollRegion)?;
@@ -232,10 +268,21 @@ pub(crate) fn wrap_history_hyperlink_lines(
     wrap_width: usize,
     wrap_policy: HistoryLineWrapPolicy,
 ) -> (Vec<HyperlinkLine>, usize) {
+    let (wrapped, wrapped_rows, _) =
+        wrap_history_hyperlink_lines_with_logical_rows(lines, wrap_width, wrap_policy);
+    (wrapped, wrapped_rows)
+}
+
+fn wrap_history_hyperlink_lines_with_logical_rows(
+    lines: &[HyperlinkLine],
+    wrap_width: usize,
+    wrap_policy: HistoryLineWrapPolicy,
+) -> (Vec<HyperlinkLine>, usize, Vec<u16>) {
     let mut wrapped = Vec::new();
     let mut wrapped_rows = 0usize;
+    let mut logical_rows = Vec::new();
 
-    for line in lines {
+    for (logical_row, line) in lines.iter().enumerate() {
         let line_wrapped = match wrap_policy {
             HistoryLineWrapPolicy::Terminal => vec![line.clone()],
             HistoryLineWrapPolicy::PreWrap
@@ -260,10 +307,14 @@ pub(crate) fn wrap_history_hyperlink_lines(
             .iter()
             .map(|wrapped_line| wrapped_line.width().max(/*other*/ 1).div_ceil(wrap_width))
             .sum::<usize>();
+        logical_rows.extend(std::iter::repeat_n(
+            u16::try_from(logical_row).unwrap_or(u16::MAX),
+            line_wrapped.len(),
+        ));
         wrapped.extend(line_wrapped);
     }
 
-    (wrapped, wrapped_rows)
+    (wrapped, wrapped_rows, logical_rows)
 }
 
 pub(crate) fn leading_whitespace_prefix(line: &Line<'_>) -> Line<'static> {
@@ -337,6 +388,22 @@ fn write_history_line<W: Write>(
     };
     let decorated = decorate_spans(&merged_line);
     write_spans(writer, decorated.iter())
+}
+
+fn write_history_media_for_logical_row<W: Write>(
+    writer: &mut W,
+    logical_row: u16,
+    placements: &[crate::media::PreparedKittyPlacement],
+) -> io::Result<()> {
+    for placement in placements
+        .iter()
+        .filter(|placement| placement.rect.y == logical_row)
+    {
+        queue!(writer, SavePosition, MoveToColumn(placement.rect.x))?;
+        writer.write_all(placement.command.as_bytes())?;
+        queue!(writer, RestorePosition)?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -497,6 +564,37 @@ mod tests {
     use crate::test_backend::VT100Backend;
     use ratatui::layout::Rect;
     use ratatui::style::Color;
+
+    #[test]
+    fn history_media_is_emitted_on_its_reserved_row_without_absolute_y_positioning() {
+        let placement = crate::media::PreparedKittyPlacement {
+            rect: Rect::new(
+                /*x*/ 4, /*y*/ 1, /*width*/ 12, /*height*/ 3,
+            ),
+            command: "<kitty-placement>".to_string(),
+        };
+        let mut output = Vec::new();
+
+        write_history_media_for_logical_row(
+            &mut output,
+            /*logical_row*/ 0,
+            std::slice::from_ref(&placement),
+        )
+        .expect("skip earlier row");
+        write_history_media_for_logical_row(&mut output, /*logical_row*/ 1, &[placement])
+            .expect("write placement row");
+        let output = String::from_utf8(output).expect("terminal output is UTF-8");
+
+        assert_eq!(output.matches("<kitty-placement>").count(), 1);
+        assert!(
+            output.contains("\x1b[5G"),
+            "must move to zero-based column four"
+        );
+        assert!(
+            !output.contains("H"),
+            "history placement must not use an absolute screen row"
+        );
+    }
 
     #[test]
     fn writes_bold_then_regular_spans() {

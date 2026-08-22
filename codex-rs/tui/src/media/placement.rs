@@ -1,22 +1,78 @@
+use std::num::NonZeroU64;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+
 use super::MediaId;
+use super::MediaNode;
 use super::MediaPlacementRequest;
+
+static NEXT_MEDIA_CELL_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Identifies one source-backed transcript cell for the lifetime of this process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct MediaCellId(NonZeroU64);
+
+impl MediaCellId {
+    pub(crate) const fn new(value: u64) -> Option<Self> {
+        match NonZeroU64::new(value) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+
+    pub(crate) fn allocate() -> Self {
+        loop {
+            let value = NEXT_MEDIA_CELL_ID.fetch_add(1, Ordering::Relaxed);
+            if let Some(id) = Self::new(value) {
+                return id;
+            }
+        }
+    }
+}
+
+/// Stable identity of one image inside one transcript cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct MediaAnchor {
+    pub(crate) cell_id: MediaCellId,
+    pub(crate) ordinal: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AnchoredMediaPlacementRequest {
+    pub(crate) anchor: MediaAnchor,
+    pub(crate) request: MediaPlacementRequest,
+}
+
+impl AnchoredMediaPlacementRequest {
+    pub(crate) fn new(cell_id: MediaCellId, request: MediaPlacementRequest) -> Self {
+        let ordinal = match &request.node {
+            MediaNode::Image { ordinal, .. } => *ordinal,
+        };
+        Self {
+            anchor: MediaAnchor { cell_id, ordinal },
+            request,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RegisteredMediaPlacement {
     pub(crate) id: MediaId,
-    pub(crate) request: MediaPlacementRequest,
+    pub(crate) request: AnchoredMediaPlacementRequest,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct MediaPlacementUpdate {
     pub(crate) retired: Vec<MediaId>,
-    pub(crate) added: Vec<RegisteredMediaPlacement>,
+    /// Placements that must be emitted again. Reusing an ID lets Kitty replace it atomically.
+    pub(crate) placed: Vec<RegisteredMediaPlacement>,
 }
 
 /// Owns terminal-media identities independently from copyable transcript lines.
 ///
-/// Active placements are replaced on every completed frame. History placements survive active
-/// redraws and are replaced only when scrollback is cleared or rebuilt from transcript source.
+/// Stable anchors let active placements move into history without changing image IDs. Scoped
+/// history replacement rebuilds only the transcript suffix affected by resize/reflow, preserving
+/// placements that already live in older terminal scrollback.
 #[derive(Debug, Default)]
 pub(crate) struct MediaPlacementRegistry {
     next_id: u32,
@@ -27,42 +83,67 @@ pub(crate) struct MediaPlacementRegistry {
 impl MediaPlacementRegistry {
     pub(crate) fn replace_active(
         &mut self,
-        requests: Vec<MediaPlacementRequest>,
+        requests: Vec<AnchoredMediaPlacementRequest>,
     ) -> MediaPlacementUpdate {
-        let retired = self
-            .active
-            .drain(..)
-            .map(|placement| placement.id)
-            .collect();
-        let added = self.register(requests);
-        self.active.clone_from(&added);
-        MediaPlacementUpdate { retired, added }
+        let mut previous = std::mem::take(&mut self.active);
+        let placed = self.register_reusing(requests, &mut previous);
+        let retired = previous.into_iter().map(|placement| placement.id).collect();
+        self.active.clone_from(&placed);
+        MediaPlacementUpdate { retired, placed }
     }
 
     pub(crate) fn append_history(
         &mut self,
-        requests: Vec<MediaPlacementRequest>,
+        requests: Vec<AnchoredMediaPlacementRequest>,
     ) -> MediaPlacementUpdate {
-        let added = self.register(requests);
-        self.history.extend(added.iter().cloned());
+        let mut placed = Vec::with_capacity(requests.len());
+        for request in requests {
+            let existing = take_by_anchor(&mut self.active, request.anchor)
+                .or_else(|| take_by_anchor(&mut self.history, request.anchor));
+            let id = existing
+                .map(|placement| placement.id)
+                .unwrap_or_else(|| self.allocate_id());
+            placed.push(RegisteredMediaPlacement { id, request });
+        }
+        self.history.extend(placed.iter().cloned());
         MediaPlacementUpdate {
             retired: Vec::new(),
-            added,
+            placed,
         }
     }
 
     pub(crate) fn replace_history(
         &mut self,
-        requests: Vec<MediaPlacementRequest>,
+        requests: Vec<AnchoredMediaPlacementRequest>,
     ) -> MediaPlacementUpdate {
-        let retired = self
+        let mut scope = self
             .history
-            .drain(..)
-            .map(|placement| placement.id)
-            .collect();
-        let added = self.register(requests);
-        self.history.clone_from(&added);
-        MediaPlacementUpdate { retired, added }
+            .iter()
+            .map(|placement| placement.request.anchor.cell_id)
+            .collect::<Vec<_>>();
+        scope.extend(requests.iter().map(|request| request.anchor.cell_id));
+        self.replace_history_scope(&scope, requests)
+    }
+
+    pub(crate) fn replace_history_scope(
+        &mut self,
+        scope: &[MediaCellId],
+        requests: Vec<AnchoredMediaPlacementRequest>,
+    ) -> MediaPlacementUpdate {
+        let mut previous = Vec::new();
+        self.history.retain(|placement| {
+            if scope.contains(&placement.request.anchor.cell_id) {
+                previous.push(placement.clone());
+                false
+            } else {
+                true
+            }
+        });
+
+        let placed = self.register_reusing(requests, &mut previous);
+        let retired = previous.into_iter().map(|placement| placement.id).collect();
+        self.history.extend(placed.iter().cloned());
+        MediaPlacementUpdate { retired, placed }
     }
 
     #[cfg(test)]
@@ -75,12 +156,18 @@ impl MediaPlacementRegistry {
         &self.history
     }
 
-    fn register(&mut self, requests: Vec<MediaPlacementRequest>) -> Vec<RegisteredMediaPlacement> {
+    fn register_reusing(
+        &mut self,
+        requests: Vec<AnchoredMediaPlacementRequest>,
+        previous: &mut Vec<RegisteredMediaPlacement>,
+    ) -> Vec<RegisteredMediaPlacement> {
         requests
             .into_iter()
-            .map(|request| RegisteredMediaPlacement {
-                id: self.allocate_id(),
-                request,
+            .map(|request| {
+                let id = take_by_anchor(previous, request.anchor)
+                    .map(|placement| placement.id)
+                    .unwrap_or_else(|| self.allocate_id());
+                RegisteredMediaPlacement { id, request }
             })
             .collect()
     }
@@ -99,4 +186,14 @@ impl MediaPlacementRegistry {
             }
         }
     }
+}
+
+fn take_by_anchor(
+    placements: &mut Vec<RegisteredMediaPlacement>,
+    anchor: MediaAnchor,
+) -> Option<RegisteredMediaPlacement> {
+    let index = placements
+        .iter()
+        .position(|placement| placement.request.anchor == anchor)?;
+    Some(placements.remove(index))
 }

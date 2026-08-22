@@ -445,6 +445,7 @@ impl HistoryCell for AgentMessageCell {
 /// because resolving their local file links depends on filesystem state that can change later.
 #[derive(Debug)]
 pub(crate) struct AgentMarkdownCell {
+    media_cell_id: crate::media::MediaCellId,
     markdown_source: String,
     media_nodes: Vec<crate::media::MediaNode>,
     cwd: PathBuf,
@@ -479,6 +480,7 @@ impl AgentMarkdownCell {
             (!crate::inline_visualization::contains_inline_visualization(&markdown_source))
                 .then(MarkdownRenderCache::default);
         Self {
+            media_cell_id: crate::media::MediaCellId::allocate(),
             markdown_source,
             media_nodes,
             cwd: cwd.to_path_buf(),
@@ -552,6 +554,10 @@ impl HistoryCell for AgentMarkdownCell {
 
     fn media_nodes(&self) -> &[crate::media::MediaNode] {
         &self.media_nodes
+    }
+
+    fn media_cell_id(&self) -> Option<crate::media::MediaCellId> {
+        Some(self.media_cell_id)
     }
 
     fn display_media_layout(
