@@ -35,11 +35,13 @@ pub(crate) fn kitty_delete_image(image_id: MediaId) -> String {
 
 pub(crate) fn iterm2_transmit_png(path: &Path, columns: u16, rows: u16) -> Result<String> {
     let png = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    Ok(iterm2_transmit_png_bytes(&png, columns, rows))
+}
+
+pub(crate) fn iterm2_transmit_png_bytes(png: &[u8], columns: u16, rows: u16) -> String {
     let size = png.len();
     let payload = general_purpose::STANDARD.encode(png);
-    Ok(format!(
-        "{ESC}]1337;File=size={size};width={columns};height={rows};inline=1:{payload}{ST}"
-    ))
+    format!("{ESC}]1337;File=size={size};width={columns};height={rows};inline=1:{payload}{ST}")
 }
 
 pub(crate) fn kitty_transmit_png_with_id(
@@ -49,6 +51,15 @@ pub(crate) fn kitty_transmit_png_with_id(
     image_id: Option<MediaId>,
 ) -> Result<String> {
     let png = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    kitty_transmit_png_bytes_with_id(&png, columns, rows, image_id)
+}
+
+pub(crate) fn kitty_transmit_png_bytes_with_id(
+    png: &[u8],
+    columns: u16,
+    rows: u16,
+    image_id: Option<MediaId>,
+) -> Result<String> {
     let payload = general_purpose::STANDARD.encode(png);
     let chunks = payload
         .as_bytes()

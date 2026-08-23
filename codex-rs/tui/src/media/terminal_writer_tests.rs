@@ -1,5 +1,7 @@
 use std::fs;
+use std::io::Cursor;
 
+use image::DynamicImage;
 use pretty_assertions::assert_eq;
 use ratatui::layout::Rect;
 use serial_test::serial;
@@ -13,6 +15,14 @@ use super::MediaPlacementRequest;
 use super::write_media_placement_update;
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+
+fn png_fixture() -> Vec<u8> {
+    let mut encoded = Cursor::new(Vec::new());
+    DynamicImage::new_rgba8(/*width*/ 1, /*height*/ 1)
+        .write_to(&mut encoded, image::ImageFormat::Png)
+        .expect("encode PNG fixture");
+    encoded.into_inner()
+}
 
 fn local_request(
     cell_id: MediaCellId,
@@ -38,10 +48,8 @@ fn kitty_writer_deletes_retired_ids_before_replaying_local_png_placement() {
     let dir = tempfile::tempdir().expect("temporary image directory");
     let first_path = dir.path().join("first.png");
     let second_path = dir.path().join("second.png");
-    fs::write(&first_path, [PNG_SIGNATURE.as_slice(), b"one"].concat())
-        .expect("write first png fixture");
-    fs::write(&second_path, [PNG_SIGNATURE.as_slice(), b"two"].concat())
-        .expect("write second png fixture");
+    fs::write(&first_path, png_fixture()).expect("write first png fixture");
+    fs::write(&second_path, png_fixture()).expect("write second png fixture");
     let first_cell = MediaCellId::new(21).expect("non-zero media cell id");
     let second_cell = MediaCellId::new(22).expect("non-zero media cell id");
     let mut registry = MediaPlacementRegistry::default();
@@ -133,14 +141,42 @@ fn kitty_writer_skips_local_files_without_a_png_signature() {
 
 #[test]
 #[serial]
+fn kitty_writer_skips_locally_malformed_png_after_signature() {
+    let dir = tempfile::tempdir().expect("temporary image directory");
+    let path = dir.path().join("truncated.png");
+    fs::write(
+        &path,
+        [PNG_SIGNATURE.as_slice(), b"not-a-png-body"].concat(),
+    )
+    .expect("write malformed PNG fixture");
+    let cell_id = MediaCellId::new(27).expect("non-zero media cell id");
+    let mut registry = MediaPlacementRegistry::default();
+    let update = registry.replace_active(vec![local_request(
+        cell_id,
+        path.to_string_lossy().into_owned(),
+        Rect::new(
+            /*x*/ 2, /*y*/ 3, /*width*/ 10, /*height*/ 3,
+        ),
+    )]);
+    let mut output = Vec::new();
+
+    let report = write_media_placement_update(&mut output, ImageProtocol::Kitty, &update)
+        .expect("skip malformed local PNG placement");
+
+    assert!(output.is_empty());
+    assert_eq!(report.placed, 0);
+    assert_eq!(report.skipped, 1);
+}
+
+#[test]
+#[serial]
 fn iterm2_writer_restores_cursor_without_suppressing_protocol_cursor_movement() {
     let dir = tempfile::tempdir().expect("temporary image directory");
     let first_path = dir.path().join("first.png");
     let second_path = dir.path().join("second.png");
-    fs::write(&first_path, [PNG_SIGNATURE.as_slice(), b"one"].concat())
-        .expect("write first png fixture");
-    fs::write(&second_path, [PNG_SIGNATURE.as_slice(), b"two"].concat())
-        .expect("write second png fixture");
+    fs::write(&first_path, png_fixture()).expect("write first png fixture");
+    let second_fixture = png_fixture();
+    fs::write(&second_path, &second_fixture).expect("write second png fixture");
     let first_cell = MediaCellId::new(25).expect("non-zero media cell id");
     let second_cell = MediaCellId::new(26).expect("non-zero media cell id");
     let mut registry = MediaPlacementRegistry::default();
@@ -160,7 +196,10 @@ fn iterm2_writer_restores_cursor_without_suppressing_protocol_cursor_movement() 
         .expect("write iTerm2 placement update");
     let output = String::from_utf8(output).expect("iTerm2 command is UTF-8");
 
-    assert!(output.contains("\x1b]1337;File=size=11;width=12;height=4;inline=1:"));
+    assert!(output.contains(&format!(
+        "\x1b]1337;File=size={};width=12;height=4;inline=1:",
+        second_fixture.len()
+    )));
     assert!(!output.contains("doNotMoveCursor"));
     assert!(output.contains("\x1b\\\x1b8"));
     assert!(!output.contains("\x1b_G"));

@@ -1,10 +1,6 @@
-use std::fs::File;
-use std::io;
-use std::io::Read;
 use std::io::Write;
-use std::path::Path;
+use std::sync::LazyLock;
 
-use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 use crossterm::cursor::MoveTo;
@@ -16,14 +12,17 @@ use super::ImageProtocol;
 use super::ImageSource;
 use super::MediaNode;
 use super::MediaPlacementUpdate;
-use super::iterm2_transmit_png;
+use super::image::iterm2_transmit_png_bytes;
+use super::image::kitty_transmit_png_bytes_with_id;
 use super::kitty_delete_image;
 use super::kitty_transmit_png_file_with_id;
-use super::kitty_transmit_png_with_id;
+use super::local_loader::LocalImageLimits;
+use super::local_loader::LocalImageLoader;
 use super::resolve_image_source;
 use ratatui::layout::Rect;
 
-const PNG_SIGNATURE: [u8; 8] = *b"\x89PNG\r\n\x1a\n";
+static LOCAL_IMAGE_LOADER: LazyLock<LocalImageLoader> =
+    LazyLock::new(|| LocalImageLoader::new(LocalImageLimits::default()));
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct MediaWriteReport {
@@ -75,16 +74,25 @@ pub(crate) fn prepare_media_placement_update(
             prepared.report.skipped += 1;
             continue;
         };
-        if !has_png_signature(&path)? {
-            prepared.report.skipped += 1;
-            continue;
-        }
+        let loaded = match LOCAL_IMAGE_LOADER.load_png_blocking(&path) {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                tracing::debug!(path = %path.display(), %error, "skipped local chat image");
+                prepared.report.skipped += 1;
+                continue;
+            }
+        };
         let rect = placement.request.request.rect;
         let command = match protocol {
-            ImageProtocol::Iterm2Inline => iterm2_transmit_png(&path, rect.width, rect.height)?,
-            ImageProtocol::Kitty => {
-                kitty_transmit_png_with_id(&path, rect.width, rect.height, Some(placement.id))?
+            ImageProtocol::Iterm2Inline => {
+                iterm2_transmit_png_bytes(&loaded.bytes, rect.width, rect.height)
             }
+            ImageProtocol::Kitty => kitty_transmit_png_bytes_with_id(
+                &loaded.bytes,
+                rect.width,
+                rect.height,
+                Some(placement.id),
+            )?,
             ImageProtocol::KittyLocalFile => {
                 kitty_transmit_png_file_with_id(&path, rect.width, rect.height, Some(placement.id))?
             }
@@ -98,23 +106,10 @@ pub(crate) fn prepare_media_placement_update(
     Ok(prepared)
 }
 
-fn has_png_signature(path: &Path) -> Result<bool> {
-    let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut signature = [0_u8; PNG_SIGNATURE.len()];
-    match file.read_exact(&mut signature) {
-        Ok(()) => Ok(signature == PNG_SIGNATURE),
-        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
-        Err(error) => {
-            Err(error).with_context(|| format!("read PNG signature from {}", path.display()))
-        }
-    }
-}
-
 /// Emits one lifecycle update to an injected terminal sink.
 ///
-/// Only static local PNG sources are handled here. Remote sources and invalid paths remain text
-/// fallbacks until the bounded asynchronous loader exists. The request objects are read-only, so
-/// terminal protocol bytes cannot leak back into Ratatui lines or persisted transcript source.
+/// 当前只处理静态本地 PNG。文件先经过有界解码、缩放和缓存准备；远程来源或无效路径继续
+/// 使用文本降级。请求对象保持只读，因此终端协议字节不会回写 Ratatui 行或持久化 transcript。
 pub(crate) fn write_media_placement_update(
     writer: &mut impl Write,
     protocol: ImageProtocol,

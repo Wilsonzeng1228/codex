@@ -1,5 +1,6 @@
 mod image;
 mod layout;
+mod local_loader;
 mod node;
 mod placement;
 mod protocol;
@@ -8,6 +9,8 @@ mod terminal_writer;
 
 #[cfg(test)]
 mod image_tests;
+#[cfg(test)]
+mod local_loader_tests;
 #[cfg(test)]
 mod node_tests;
 #[cfg(test)]

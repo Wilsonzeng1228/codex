@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
 > 更新时间：2026-08-23
-> 当前状态：Phase 1 已完成。Windows 版 WezTerm 使用显式 `iterm2` override 后，静态本地 PNG 能在 finalized assistant history 中显示；滚动、窗口宽高调整、重复 reflow、真实 `/resume` 任务切换、空闲 `/clear` 消息清理和退出后重启均未观察到幽灵图片。空 override 已真实确认回到纯文本降级且不生成 placement。本轮不扩大到网络下载、缓存、Sixel 或 LaTeX。
+> 当前状态：Phase 1 已完成，Phase 2 已开始。Windows 版 WezTerm 的静态本地 PNG 与生命周期验收保持通过；本轮新增本地 PNG 有界读取、完整解码、缩放和内存 LRU，并为后续事件循环集成提供异步 loader API。现有 draw/history writer 暂时仍调用同一 loader 的 blocking 内核，后台加载完成后调度局部重绘尚未接入；HTTPS、Sixel 和 LaTeX 未开始。
 
 ## 新对话启动指令
 
@@ -27,7 +27,7 @@
 - 工作仓库：`D:\hermes\agent-repl\codex-rich`
 - 当前分支：`codex/rich-media`
 - 官方基线：`d44696065723a56b9de6538cd6348fcbe6c1542e`
-- 本轮继续开发前 HEAD：`0185077629697c1743d14690d434fc6be8e1495e feat: 锚定聊天媒体到终端历史`
+- 本轮继续开发前 HEAD：`a801d6269111ac305294d8534e7e259d750cce6f docs: 完成 Phase 1 生命周期视觉验收`
 - 远程仓库只有：`upstream https://github.com/openai/codex.git`
 - 尚无 `origin`：用户还没有提供 fork 地址，不要自行猜测或推送。
 - 父目录的 `D:\hermes\agent-repl\graphify-out` 是未完成的旁路分析产物，没有可查询的 `graph.json`，不属于本仓库，不要加入提交。
@@ -118,6 +118,15 @@ ef185a27b3 feat: 为 Markdown 图片增加显式文本降级
 - 流式 assistant cell 会先写入文本 fallback；final consolidation 若发现媒体节点且 capability 开启，会强制一次 source-backed reflow，使图片占位和 placement 真正进入 history。该缺口已用 `0` placement 的 RED 和 `1` placement 的 GREEN 覆盖。
 - Windows WezTerm 真实日志已证明初次 history placement、三次 resize/reflow 重建和退出 retirement；用户确认图片显示并且上下滚动、调整窗口后无残影。
 
+### 3.7 本地 PNG 有界 loader 与缓存基础
+
+- 新增 `media/local_loader.rs`，把本地 PNG 读取、解码和缩放集中到独立模块；异步入口使用 `tokio::task::spawn_blocking` 隔离文件 I/O/解码，并设置 5 秒等待上限。
+- 默认资源上限为：源文件 16 MiB、准备后 PNG 16 MiB、单边 8192 像素、总像素 4,194,304、输出单边 2048 像素。像素和单边上限在完整解码前由 PNG decoder dimensions 检查。
+- 内存 LRU 同时受 32 条记录和 64 MiB 约束；缓存键包含规范化路径、文件长度和修改时间，命中时复用同一 `Arc<[u8]>`，超限时从最久未使用项开始淘汰。
+- iTerm2 inline 和 Kitty direct-data writer 改为发送 loader 准备后的 PNG 字节；Kitty local-file 仍保留路径引用语义，但发送前同样完成完整 PNG 解码与资源校验。
+- 只有 PNG magic、正文已损坏的文件不再被发送到终端，而是计为 skipped 并保留文本降级。
+- 为避免在同一提交同时重写同步 draw/history 调度，生产 writer 当前调用 loader 的 blocking 内核；真正的后台加载、完成通知、帧调度和取消仍是下一功能单元。
+
 ## 4. 当前架构判断
 
 这是下一阶段最重要的约束：
@@ -137,6 +146,8 @@ ef185a27b3 feat: 为 Markdown 图片增加显式文本降级
 - `codex-rs/tui/src/media/mod.rs`
 - `codex-rs/tui/src/media/image.rs`
 - `codex-rs/tui/src/media/image_tests.rs`
+- `codex-rs/tui/src/media/local_loader.rs`
+- `codex-rs/tui/src/media/local_loader_tests.rs`
 - `codex-rs/tui/src/media/protocol.rs`
 - `codex-rs/tui/src/media/protocol_tests.rs`
 - `codex-rs/tui/src/media/resolver.rs`
@@ -248,6 +259,15 @@ just test -p codex-tui finalized_markdown_media_layout_reserves_rows_at_each_ima
 - 正常 `/exit` 时 runtime log 另记录 `requested=0 retired=2 placed=0 skipped=0`，专项 WezTerm/Codex 进程已退出。
 - 有效截图、pane 环境记录和 runtime log 位于仓库外 `C:\Users\Wilsonzeng\.codex\artifacts\rich-media-smoke\2026-08-23\phase1-lifecycle-rerun`。
 
+2026-08-23 Phase 2 本地 PNG loader 第一单元：
+
+- loader RED 首先因 `LocalImageLoader`、`LocalImageLimits` 和 `LocalImageLoadError` 不存在而产生 3 项 unresolved import 编译错误；最小实现后 `media::local_loader_tests` 3/3 GREEN。
+- writer 集成 RED 明确失败于 `assertion failed: output.is_empty()`，证明旧逻辑只检查 8 字节 magic，仍会发送正文损坏的伪 PNG；接入完整解码后该测试 GREEN。
+- `just test -p codex-tui media::terminal_writer_tests` 5/5 通过；覆盖有效 iTerm2/Kitty 写入、远程来源降级、缺少 magic 和 magic 正确但正文损坏两类伪 PNG。
+- 完整 `just test -p codex-tui` 共运行 3761 项，3759 项通过、2 项失败、10 项跳过。失败仍是既有项目权限历史测试和 pets Kitty local-file 测试，与本轮 loader/writer 修改无关。
+- `just fix -p codex-tui` 退出码 0，仅保留未修改 `pets/mod.rs` 的两条既有 `expect_used` warning。
+- `just fmt` 仍因 Windows 缺少 `tools/buildifier` 在 Bazel/Starlark 阶段报 `[WinError 2]`；随后 `cargo fmt --all -- --check` 退出码 0。
+
 ## 7. Windows 构建环境
 
 全局代理指向失效的 `127.0.0.1:7892`。所有需要 Cargo/just 网络访问的命令应只在当前 PowerShell 会话设置以下覆盖，不要修改用户的全局 Git 或代理配置：
@@ -294,15 +314,24 @@ $env:CARGO_INCREMENTAL='0'
 - history writer 在保留行进入 scrollback 时发送，只使用列定位；
 - scoped reflow 保留未参与本次重建的旧 scrollback placement。
 
-Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、resize/reflow、真实 `/resume` 任务切换、空闲 `/clear` retirement、退出 retirement 和无 override 文本降级均通过。后续可以按总体规划进入 Phase 2，但新对话仍应先确认范围和资源预算，不要把网络下载、缓存、Sixel 或 LaTeX 混入本轮生命周期验收提交。
+Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、resize/reflow、真实 `/resume` 任务切换、空闲 `/clear` retirement、退出 retirement 和无 override 文本降级均通过。Phase 1 生命周期验收提交本身没有混入网络下载、缓存、Sixel 或 LaTeX；后续 Phase 2 功能单元继续独立执行 TDD 和资源预算检查。
 
-### 8.3 再进入异步 I/O
+### 8.3 已进入异步 I/O：先完成本地 PNG loader 基础
 
-完成布局与生命周期后，再实现：
+本轮已经完成：
 
-- 本地文件异步读取、解码、缩放与缓存；
-- 像素、字节、格式 magic、解码时限等资源上限；
-- 公网 HTTPS 下载器；
+- 本地 PNG 异步 API、blocking 复用内核和完整解码；
+- 源字节、准备后字节、单边尺寸、总像素和等待时限上限；
+- 等比例缩放到最大输出单边；
+- 受条目数和总字节数双重约束的内存 LRU；
+- writer 对损坏/超限文件保持文本降级，不发送终端协议字节。
+
+下一功能单元按以下顺序继续：
+
+- 把 loader 的异步结果接入 TUI 事件循环和 frame requester，移除首次读取/解码对同步 writer 的阻塞；
+- 为任务切换、消息 retirement 和 TUI drop 增加加载任务取消/忽略过期结果；
+- 再扩展 JPEG、WebP 和 GIF 静态首帧，并让缓存键纳入实际渲染参数；
+- 最后才实现公网 HTTPS 下载器；
 - DNS 解析后再次拒绝私网/环回/链路本地地址；
 - 每次重定向都复检目标，并设置重定向次数、超时与最大响应体。
 
@@ -311,7 +340,9 @@ Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、re
 ## 9. 尚未完成
 
 - active streaming 瞬间没有单独截图，当前可靠证据集中在 finalized history、滚动、resize/reflow、退出 retirement 与文本降级；
-- 尚无本地图片解码、缩放和缓存；
+- 本地 PNG loader 已具备异步 API、解码、缩放和有界内存 LRU，但生产 writer 首次读取/解码仍走 blocking 内核，尚未接入后台完成通知与局部重绘；
+- loader 暂只接受 PNG；JPEG、WebP、GIF 静态首帧和按实际终端渲染参数生成缓存键尚未实现；
+- 缓存尚无用户清理命令或磁盘层；
 - 尚无远程 HTTPS 下载器和 DNS 级 SSRF 防护；
 - Sixel 编码仍留在 pets 专用实现，尚未完全移入通用媒体层；
 - 媒体节点尚未记录源字节范围；生命周期更新已能发送/删除 Kitty placement，但本地文件仍在同步路径读取，尚无解码、缩放、缓存和资源上限；
@@ -324,7 +355,7 @@ Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、re
 |---|---|
 | Phase 0：基线与架构勘察 | 已完成 |
 | Phase 1：图片语法、协议、节点与布局 | 已完成 |
-| Phase 2：本地/远程图片 I/O 与缓存 | 待开始（仅来源解析已提前完成） |
+| Phase 2：本地/远程图片 I/O 与缓存 | 进行中（本地 PNG loader、资源上限和内存 LRU 已完成；异步 UI 集成与远程下载待做） |
 | Phase 3：LaTeX | 待开始 |
 | Phase 4：交互与配置 | 待开始 |
 | Phase 5：文档、技能与验收 | 待开始 |
@@ -346,7 +377,7 @@ Windows 下 `git status --short` 当前会显示：
 - TUI 测试优先 `just test -p codex-tui <filter>`；
 - 新行为必须先写失败测试，确认 RED 后做最小实现并确认 GREEN；
 - 本轮所有文件完成后统一提交，禁止 `git add .`；
-- 本轮建议提交信息：`docs: 完成 Phase 1 生命周期视觉验收`。
+- 本轮建议提交信息：`feat: 增加本地图片加载与缓存边界`。
 
 ## 11. 新对话的起手命令
 
