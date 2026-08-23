@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::net::IpAddr;
 use std::net::SocketAddr;
+use std::net::ToSocketAddrs;
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -27,6 +28,36 @@ pub(crate) trait RemoteImageDnsResolver: Clone + Send + Sync + 'static {
         host: String,
         port: u16,
     ) -> impl Future<Output = Result<Vec<IpAddr>, String>> + Send;
+}
+
+/// Resolves remote-image hosts through the operating system resolver.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SystemRemoteImageDnsResolver;
+
+impl SystemRemoteImageDnsResolver {
+    pub(crate) const fn new() -> Self {
+        Self
+    }
+}
+
+impl RemoteImageDnsResolver for SystemRemoteImageDnsResolver {
+    async fn resolve(&self, host: String, port: u16) -> Result<Vec<IpAddr>, String> {
+        tokio::task::spawn_blocking(move || {
+            let mut addresses = Vec::new();
+            let resolved = (host.as_str(), port)
+                .to_socket_addrs()
+                .map_err(|error| error.to_string())?;
+            for address in resolved {
+                let address = address.ip();
+                if !addresses.contains(&address) {
+                    addresses.push(address);
+                }
+            }
+            Ok(addresses)
+        })
+        .await
+        .map_err(|error| format!("system DNS worker failed: {error}"))?
+    }
 }
 
 /// Sends one redirect-disabled request to the already validated addresses in the request.
@@ -368,6 +399,16 @@ where
             .into_iter()
             .map(|address| SocketAddr::new(address, port))
             .collect())
+    }
+}
+
+impl RemoteImageLoader<SystemRemoteImageDnsResolver, PinnedRemoteImageHttpClient> {
+    pub(crate) fn production() -> Self {
+        Self::new(
+            SystemRemoteImageDnsResolver::new(),
+            PinnedRemoteImageHttpClient::new(),
+            RemoteImageLimits::default(),
+        )
     }
 }
 

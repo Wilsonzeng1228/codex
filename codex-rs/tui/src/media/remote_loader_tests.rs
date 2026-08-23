@@ -178,6 +178,21 @@ where
 }
 
 #[tokio::test]
+async fn system_dns_resolver_returns_only_localhost_addresses_for_localhost() {
+    let resolver = remote::SystemRemoteImageDnsResolver::new();
+    let addresses = remote::RemoteImageDnsResolver::resolve(
+        &resolver,
+        "localhost".to_string(),
+        /*port*/ 443,
+    )
+    .await
+    .expect("resolve localhost through the system DNS resolver");
+
+    assert!(!addresses.is_empty());
+    assert!(addresses.into_iter().all(|address| address.is_loopback()));
+}
+
+#[tokio::test]
 async fn remote_loader_allows_only_https_with_public_dns_answers() {
     let dns = FakeDns::new([]);
     let http = FakeHttp::new([]);
