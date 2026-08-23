@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::time::Duration;
 
+use codex_http_client::HttpClientBuilder;
 use thiserror::Error;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
@@ -37,6 +38,63 @@ pub(crate) trait RemoteImageHttpClient: Clone + Send + Sync + 'static {
         &self,
         request: RemoteImageHttpRequest,
     ) -> impl Future<Output = Result<RemoteImageHttpResponse, String>> + Send;
+}
+
+/// Sends remote-image requests directly to addresses already approved by the policy layer.
+///
+/// Direct routing is required here because an HTTP proxy could resolve the target hostname again
+/// and bypass the checked addresses. Redirects stay visible so the policy layer can validate each
+/// hop before sending it.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PinnedRemoteImageHttpClient;
+
+impl PinnedRemoteImageHttpClient {
+    pub(crate) const fn new() -> Self {
+        Self
+    }
+}
+
+impl RemoteImageHttpClient for PinnedRemoteImageHttpClient {
+    async fn get(
+        &self,
+        request: RemoteImageHttpRequest,
+    ) -> Result<RemoteImageHttpResponse, String> {
+        let host = request
+            .url
+            .host_str()
+            .ok_or_else(|| "remote image URL is missing a host".to_string())?;
+        let client = HttpClientBuilder::new()
+            .without_redirects()
+            .without_request_logging()
+            .connect_timeout(request.connect_timeout)
+            .resolve_to_addrs(host, &request.resolved_addrs)
+            .build_direct()
+            .map_err(|error| error.to_string())?;
+        let response = client
+            .get(request.url)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?;
+        let status = response.status().as_u16();
+        let location = response
+            .headers()
+            .get("location")
+            .map(|value| value.to_str().map(str::to_string))
+            .transpose()
+            .map_err(|error| format!("invalid redirect Location header: {error}"))?;
+        let content_length = response.content_length();
+        let body = response.bytes_stream().map(|chunk| {
+            chunk
+                .map(|bytes| bytes.to_vec())
+                .map_err(|error| error.to_string())
+        });
+        Ok(RemoteImageHttpResponse::new(
+            status,
+            location,
+            content_length,
+            body,
+        ))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

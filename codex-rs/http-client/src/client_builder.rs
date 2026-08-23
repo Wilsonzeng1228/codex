@@ -6,6 +6,7 @@
 //! paths.
 
 use http::HeaderMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -32,6 +33,7 @@ pub struct HttpClientBuilder {
     default_headers: Option<HeaderMap>,
     follow_redirects: bool,
     connect_timeout: Option<Duration>,
+    dns_overrides: Vec<(String, Vec<SocketAddr>)>,
     chatgpt_cloudflare_cookie_store: bool,
     chatgpt_cookie_store: Option<Arc<ChatGptCookieStore>>,
     request_logging: RequestLogging,
@@ -103,6 +105,16 @@ impl HttpClientBuilder {
     /// Limits only connection establishment, not the request as a whole.
     pub fn connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = Some(timeout);
+        self
+    }
+
+    /// Resolves `domain` only to the supplied addresses for clients built from this builder.
+    ///
+    /// This can close the gap between an application-level DNS policy check and connection setup.
+    /// Callers must validate every address before passing it here. This pins direct connections;
+    /// an HTTP proxy may still resolve the request hostname independently.
+    pub fn resolve_to_addrs(mut self, domain: impl Into<String>, addresses: &[SocketAddr]) -> Self {
+        self.dns_overrides.push((domain.into(), addresses.to_vec()));
         self
     }
 
@@ -288,6 +300,9 @@ impl HttpClientBuilder {
         if let Some(connect_timeout) = self.connect_timeout {
             builder = builder.connect_timeout(connect_timeout);
         }
+        for (domain, addresses) in self.dns_overrides {
+            builder = builder.resolve_to_addrs(&domain, &addresses);
+        }
         if self.chatgpt_cloudflare_cookie_store {
             builder = match self.chatgpt_cookie_store {
                 Some(store) => builder.cookie_provider(store),
@@ -304,6 +319,7 @@ impl Default for HttpClientBuilder {
             default_headers: None,
             follow_redirects: true,
             connect_timeout: None,
+            dns_overrides: Vec::new(),
             chatgpt_cloudflare_cookie_store: false,
             chatgpt_cookie_store: None,
             request_logging: RequestLogging::Enabled,

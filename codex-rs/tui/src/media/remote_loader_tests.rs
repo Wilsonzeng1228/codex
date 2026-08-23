@@ -1,6 +1,9 @@
 use std::collections::VecDeque;
 use std::future::pending;
+use std::io::Read;
+use std::io::Write;
 use std::net::IpAddr;
+use std::net::TcpListener;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
@@ -399,4 +402,50 @@ async fn downloaded_bytes_use_existing_magic_decode_and_pixel_limits() {
             max_pixels: 1,
         })
     );
+}
+
+#[tokio::test]
+async fn pinned_http_adapter_connects_to_validated_address_without_following_redirects() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind HTTP fixture");
+    let address = listener.local_addr().expect("fixture address");
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept HTTP request");
+        let mut request = Vec::new();
+        loop {
+            let mut chunk = [0; 1024];
+            let size = stream.read(&mut chunk).expect("read HTTP request");
+            if size == 0 {
+                break;
+            }
+            request.extend_from_slice(&chunk[..size]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        stream
+            .write_all(
+                b"HTTP/1.1 302 Found\r\nLocation: http://redirect.invalid/next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .expect("write HTTP response");
+        String::from_utf8(request).expect("HTTP request is UTF-8")
+    });
+
+    let client = remote::PinnedRemoteImageHttpClient::new();
+    let url = format!("http://pinned.invalid:{}/start", address.port())
+        .parse()
+        .expect("fixture URL");
+    remote::RemoteImageHttpClient::get(
+        &client,
+        remote::RemoteImageHttpRequest {
+            url,
+            resolved_addrs: vec![address],
+            connect_timeout: Duration::from_secs(2),
+        },
+    )
+    .await
+    .expect("return redirect response without following it");
+
+    let request = server.join().expect("HTTP fixture thread");
+    assert!(request.starts_with("GET /start HTTP/1.1\r\n"));
+    assert!(request.contains(&format!("\r\nhost: pinned.invalid:{}\r\n", address.port())));
 }
