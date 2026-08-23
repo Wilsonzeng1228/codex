@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
 > 更新时间：2026-08-23
-> 当前状态：Phase 1 已完成，Phase 2 继续推进。Windows 版 WezTerm 的静态本地 PNG 与生命周期验收保持通过；本地 PNG 已具备有界读取、完整解码、缩放、内存 LRU 和 TUI 异步加载协调。生产 draw/history writer 不再执行阻塞读取或解码；后台完成会请求新帧，history 完成会复用现有 source-backed transcript reflow 把图片写入预留的 scrollback 行。HTTPS、Sixel 和 LaTeX 未开始。
+> 当前状态：Phase 1 已完成，Phase 2 继续推进。Windows 版 WezTerm 的静态本地 PNG 真实终端与生命周期验收保持通过；本地 PNG、JPEG、WebP 和 GIF 静态首帧已具备有界读取、完整解码、缩放、内存 LRU 和 TUI 异步加载协调，缓存键纳入影响准备后 PNG 字节的宽高参数。生产 draw/history writer 不执行阻塞读取或解码；后台完成会请求新帧，history 完成会复用现有 source-backed transcript reflow 把图片写入预留的 scrollback 行。HTTPS、Sixel 和 LaTeX 未开始。
 
 ## 新对话启动指令
 
@@ -27,7 +27,7 @@
 - 工作仓库：`D:\hermes\agent-repl\codex-rich`
 - 当前分支：`codex/rich-media`
 - 官方基线：`d44696065723a56b9de6538cd6348fcbe6c1542e`
-- 本轮继续开发前 HEAD：`065691020e1fc857ba9b89b571ebeab365fbd57c feat: 增加本地图片加载与缓存边界`
+- 本轮继续开发前 HEAD：`f9a93c505d78dcfbf04b926c62bc2d999684a3db feat: 异步加载聊天本地图片`
 - 远程仓库只有：`upstream https://github.com/openai/codex.git`
 - 尚无 `origin`：用户还没有提供 fork 地址，不要自行猜测或推送。
 - 父目录的 `D:\hermes\agent-repl\graphify-out` 是未完成的旁路分析产物，没有可查询的 `graph.json`，不属于本仓库，不要加入提交。
@@ -35,6 +35,10 @@
 最近的实现提交（不含本轮待提交变更）：
 
 ```text
+f9a93c505d feat: 异步加载聊天本地图片
+065691020e feat: 增加本地图片加载与缓存边界
+a801d62691 docs: 完成 Phase 1 生命周期视觉验收
+292c62ec95 feat: 支持 Windows WezTerm 聊天图片
 0185077629 feat: 锚定聊天媒体到终端历史
 5d44dd8034 feat: 建立聊天媒体布局请求
 cb3fa06bdd docs: 补充富媒体项目阶段性交接
@@ -84,7 +88,7 @@ ef185a27b3 feat: 为 Markdown 图片增加显式文本降级
 - iTerm2 inline 没有本项目可用的 Kitty image-ID 删除语义，动画 pets 会被写入 scrollback 并形成残影。因此 Windows WezTerm 上 pets 明确拒绝 `Iterm2Inline`，保持不显示；聊天静态图片仍可使用该协议。
 - Kitty PNG 发送与删除控制序列已经抽到 `media/image.rs`。
 - 图片 ID 已改为强类型、非零的 `MediaId`。
-- iTerm2 chat writer 只处理通过 8 字节 PNG signature 校验的静态本地文件；未扩展公网下载或其他格式。
+- iTerm2 chat writer 消费 loader 准备后的 PNG 字节；本地源格式现覆盖 PNG、JPEG、WebP 和 GIF 静态首帧，尚未扩展公网下载。
 
 ### 3.4 媒体节点建模
 
@@ -113,18 +117,18 @@ ef185a27b3 feat: 为 Markdown 图片增加显式文本降级
 - active placement 通过可注入 writer 使用 frame 绝对 `Rect`；history placement 在对应保留行写入 terminal scrollback 时只移动列并立即发送，避免把历史图片绑定到易变化的屏幕绝对 Y。
 - `MediaPlacementUpdate` 已接到现有 `kitty_transmit_png_*` 和 `kitty_delete_image` 抽象；删除先于重放，redraw、resize/reflow、历史清理和 TUI drop 都有明确 retirement 路径。
 - 生产环境可显式设置 `CODEX_TUI_MEDIA_CAPABILITY_OVERRIDE=kitty` 或 `iterm2`；Windows WezTerm 实测必须使用 `iterm2`。占位行由 `CODEX_TUI_MEDIA_PLACEHOLDER_ROWS` 指定，合法范围 1–32，默认 4。未显式启用时仍为 `None`，不会发送聊天媒体协议字节。
-- writer 当前只接受本地来源且要求 8 字节 PNG magic；HTTPS、拒绝来源和伪 PNG 均继续文本降级。协议字节只写入终端 sink，不进入 Ratatui `Line`、raw Markdown、复制文本或持久化 transcript。
+- writer 当前只接受本地来源；loader 按文件 magic 识别 PNG、JPEG、WebP 和 GIF，完整解码后统一准备为 PNG。HTTPS、拒绝来源、未知格式和损坏图片均继续文本降级。协议字节只写入终端 sink，不进入 Ratatui `Line`、raw Markdown、复制文本或持久化 transcript。
 - 注册表的更新结果显式给出 `retired` 与 `added` MediaId，为后续复用 Kitty 删除/发送接口提供边界。
 - 流式 assistant cell 会先写入文本 fallback；final consolidation 若发现媒体节点且 capability 开启，会强制一次 source-backed reflow，使图片占位和 placement 真正进入 history。该缺口已用 `0` placement 的 RED 和 `1` placement 的 GREEN 覆盖。
 - Windows WezTerm 真实日志已证明初次 history placement、三次 resize/reflow 重建和退出 retirement；用户确认图片显示并且上下滚动、调整窗口后无残影。
 
-### 3.7 本地 PNG 有界 loader 与缓存基础
+### 3.7 本地静态图片有界 loader 与缓存基础
 
-- 新增 `media/local_loader.rs`，把本地 PNG 读取、解码和缩放集中到独立模块；异步入口使用 `tokio::task::spawn_blocking` 隔离文件 I/O/解码，并设置 5 秒等待上限。
-- 默认资源上限为：源文件 16 MiB、准备后 PNG 16 MiB、单边 8192 像素、总像素 4,194,304、输出单边 2048 像素。像素和单边上限在完整解码前由 PNG decoder dimensions 检查。
-- 内存 LRU 同时受 32 条记录和 64 MiB 约束；缓存键包含规范化路径、文件长度和修改时间，命中时复用同一 `Arc<[u8]>`，超限时从最久未使用项开始淘汰。
-- iTerm2 inline 和 Kitty direct-data writer 改为发送 loader 准备后的 PNG 字节；Kitty local-file 仍保留路径引用语义，但发送前同样完成完整 PNG 解码与资源校验。
-- 只有 PNG magic、正文已损坏的文件不再被发送到终端，而是计为 skipped 并保留文本降级。
+- 新增 `media/local_loader.rs`，把本地 PNG、JPEG、WebP 和 GIF 静态首帧读取、解码、缩放与 PNG 准备集中到独立模块；异步入口使用 `tokio::task::spawn_blocking` 隔离文件 I/O/解码，并设置 5 秒等待上限。
+- 格式按文件 magic 识别，不信任扩展名。默认资源上限为：源文件 16 MiB、准备后 PNG 16 MiB、单边 8192 像素、总像素 4,194,304、输出宽高各 2048 像素；尺寸上限在完整像素解码前检查。
+- 内存 LRU 同时受 32 条记录和 64 MiB 约束；缓存键包含规范化路径、文件长度、修改时间，以及实际影响准备后 PNG 字节的最大输出宽高，命中时复用同一 `Arc<[u8]>`，超限时从最久未使用项开始淘汰。
+- iTerm2 inline 和 Kitty direct-data writer 发送 loader 准备后的 PNG 字节。Kitty local-file 仅在源文件本来就是无需缩放的 PNG 时使用路径引用；非 PNG 或发生缩放时改发准备后的 PNG 字节，避免终端绕过解码结果。
+- 未知格式、只有正确 magic 但正文损坏的图片不再被发送到终端，而是计为 skipped 并保留文本降级。
 - 新增 `MediaLoadCoordinator` 作为 TUI 所有的加载生命周期协调器：默认最多并发 2 个本地加载，同一规范化路径只保留一个 in-flight task，active/history anchor 共享结果。
 - production writer 现在只消费 `Ready`、`Pending` 或 `Unavailable` 的已准备状态，不再读取文件或解码。加载完成通过 `FrameRequester` 请求新帧；history 完成会触发现有的 source-backed bounded transcript reflow，active-only 完成只需下一帧重绘。
 - task retirement 会移除 anchor waiter；最后一个 waiter 消失时中止 wrapper task，generation 检查会忽略已经排队的过期完成结果。由于 `spawn_blocking` 已开始的系统工作不能保证硬取消，这里只承诺过期结果不会重新进入 placement 生命周期。
@@ -150,6 +154,10 @@ ef185a27b3 feat: 为 Markdown 图片增加显式文本降级
 - `codex-rs/tui/src/media/image_tests.rs`
 - `codex-rs/tui/src/media/local_loader.rs`
 - `codex-rs/tui/src/media/local_loader_tests.rs`
+- `codex-rs/tui/src/media/load_coordinator.rs`
+- `codex-rs/tui/src/media/load_coordinator_tests.rs`
+- `codex-rs/tui/src/media/terminal_writer.rs`
+- `codex-rs/tui/src/media/terminal_writer_tests.rs`
 - `codex-rs/tui/src/media/protocol.rs`
 - `codex-rs/tui/src/media/protocol_tests.rs`
 - `codex-rs/tui/src/media/resolver.rs`
@@ -279,6 +287,16 @@ just test -p codex-tui finalized_markdown_media_layout_reserves_rows_at_each_ima
 - `just fix -p codex-tui` 退出码 0，仅保留未修改 `pets/mod.rs` 的两条既有 `expect_used` warning。
 - `just fmt` 仍因 Windows 缺少 `tools/buildifier` 在 Bazel/Starlark 阶段报 `[WinError 2]`；随后 `cargo fmt --all -- --check` 退出码 0。
 
+2026-08-23 Phase 2 本地静态格式与渲染参数缓存单元：
+
+- RED 先因 `LocalImageRenderParams`、`load_image` 和 `LoadedLocalImage::can_use_source_file` 不存在而产生 unresolved import/方法/字段编译错误；补入最小接口和实现后转为 GREEN。
+- loader 按文件 magic 覆盖 PNG、JPEG、WebP 和 GIF；测试确认所有非 PNG 源统一产生有效 PNG 字节，GIF 只取首帧，并在不同最大输出宽高下生成不同缓存项、相同参数复用同一 `Arc`。
+- Kitty local-file 新增安全分流测试：原始且未缩放的 PNG 可继续使用 `t=f` 文件引用；非 PNG 或缩放结果必须使用 `t=d` 发送准备后的 PNG，不能让终端重新读取源文件绕过转换。
+- 定向测试 `media::local_loader_tests` 6/6、`media::terminal_writer_tests` 6/6、`media::load_coordinator_tests` 4/4 通过。
+- 完整 `just test -p codex-tui` 共运行 3769 项，3767 项通过、2 项失败、10 项跳过。失败仍是既有项目权限历史测试（得到 `../trusted`）和 pets Kitty local-file 测试（输出包含 `cG5n`），没有新增失败。
+- `just fix -p codex-tui` 退出码 0，仅保留未修改 `pets/mod.rs` 的两条既有 `expect_used` warning。
+- `just fmt` 仍因 Windows 缺少 `tools/buildifier` 在 Bazel/Starlark 阶段报 `[WinError 2]`；随后 `cargo fmt --all -- --check` 退出码 0，仅有 stable Rust 不支持 `imports_granularity=Item` 的提示。
+
 ## 7. Windows 构建环境
 
 全局代理指向失效的 `127.0.0.1:7892`。所有需要 Cargo/just 网络访问的命令应只在当前 PowerShell 会话设置以下覆盖，不要修改用户的全局 Git 或代理配置：
@@ -327,11 +345,11 @@ $env:CARGO_INCREMENTAL='0'
 
 Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、resize/reflow、真实 `/resume` 任务切换、空闲 `/clear` retirement、退出 retirement 和无 override 文本降级均通过。Phase 1 生命周期验收提交本身没有混入网络下载、缓存、Sixel 或 LaTeX；后续 Phase 2 功能单元继续独立执行 TDD 和资源预算检查。
 
-### 8.3 已完成本地 PNG loader 与异步 TUI 集成
+### 8.3 已完成本地静态图片 loader 与异步 TUI 集成
 
 本轮已经完成：
 
-- 本地 PNG 异步 API、blocking 隔离内核和完整解码；
+- 本地 PNG、JPEG、WebP 和 GIF 静态首帧异步 API、blocking 隔离内核和完整解码；
 - 源字节、准备后字节、单边尺寸、总像素和等待时限上限；
 - 等比例缩放到最大输出单边；
 - 受条目数和总字节数双重约束的内存 LRU；
@@ -339,11 +357,13 @@ Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、re
 - TUI 所有的有界加载协调器、同路径 in-flight 去重、active/history 完成通知与 frame requester 接线；
 - retirement/drop 的 waiter 清理、wrapper task 中止和过期 generation 忽略；
 - production writer 只消费准备状态，首次文件读取/解码不再阻塞 draw/history writer。
+- 格式按 magic 识别并统一准备为 PNG；缓存键包含影响输出字节的最大宽高参数；Kitty local-file 只复用无需转换的原始 PNG。
+
+### 8.4 下一功能单元：有边界的公网 HTTPS 下载
 
 下一功能单元按以下顺序继续：
 
-- 扩展 JPEG、WebP 和 GIF 静态首帧，并让缓存键纳入实际渲染参数；
-- 最后才实现公网 HTTPS 下载器；
+- 先用可注入 DNS/HTTP 边界写失败测试，固定公网 HTTPS 下载的安全策略；
 - DNS 解析后再次拒绝私网/环回/链路本地地址；
 - 每次重定向都复检目标，并设置重定向次数、超时与最大响应体。
 
@@ -352,7 +372,6 @@ Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、re
 ## 9. 尚未完成
 
 - active streaming 瞬间没有单独截图，当前可靠证据集中在 finalized history、滚动、resize/reflow、退出 retirement 与文本降级；
-- loader 暂只接受 PNG；JPEG、WebP、GIF 静态首帧和按实际终端渲染参数生成缓存键尚未实现；
 - 缓存尚无用户清理命令或磁盘层；
 - 尚无远程 HTTPS 下载器和 DNS 级 SSRF 防护；
 - Sixel 编码仍留在 pets 专用实现，尚未完全移入通用媒体层；
@@ -366,7 +385,7 @@ Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、re
 |---|---|
 | Phase 0：基线与架构勘察 | 已完成 |
 | Phase 1：图片语法、协议、节点与布局 | 已完成 |
-| Phase 2：本地/远程图片 I/O 与缓存 | 进行中（本地 PNG loader、资源上限、内存 LRU 和异步 UI 集成已完成；其他静态格式与远程下载待做） |
+| Phase 2：本地/远程图片 I/O 与缓存 | 进行中（本地 PNG/JPEG/WebP/GIF 静态首帧、资源上限、渲染参数缓存和异步 UI 集成已完成；远程下载待做） |
 | Phase 3：LaTeX | 待开始 |
 | Phase 4：交互与配置 | 待开始 |
 | Phase 5：文档、技能与验收 | 待开始 |
@@ -388,7 +407,7 @@ Windows 下 `git status --short` 当前会显示：
 - TUI 测试优先 `just test -p codex-tui <filter>`；
 - 新行为必须先写失败测试，确认 RED 后做最小实现并确认 GREEN；
 - 本轮所有文件完成后统一提交，禁止 `git add .`；
-- 本轮建议提交信息：`feat: 异步加载聊天本地图片`。
+- 本轮建议提交信息：`feat: 支持更多本地图片格式`。
 
 ## 11. 新对话的起手命令
 
@@ -412,7 +431,7 @@ Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\app\resize_reflow.rs
 Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\tui.rs
 ```
 
-不要重做已经通过的 Windows WezTerm 核心 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、真实 `/resume` 任务切换、空闲 `/clear` retirement 或本地 PNG 异步 TUI 集成。下一轮继续 Phase 2 时，先重新确认范围、磁盘红线和静态格式解码边界。
+不要重做已经通过的 Windows WezTerm 核心 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、真实 `/resume` 任务切换、空闲 `/clear` retirement、本地异步 TUI 集成或 PNG/JPEG/WebP/GIF 静态首帧支持。下一轮继续 Phase 2 时，先重新确认范围、磁盘红线和 HTTPS 下载安全边界。
 
 ## 12. Phase 1 完成判据
 

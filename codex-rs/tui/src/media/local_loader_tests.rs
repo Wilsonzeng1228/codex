@@ -3,11 +3,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use image::DynamicImage;
+use image::Frame;
+use image::GenericImageView;
+use image::ImageFormat;
+use image::Rgba;
+use image::RgbaImage;
+use image::codecs::gif::GifEncoder;
 use pretty_assertions::assert_eq;
 
 use super::local_loader::LocalImageLimits;
 use super::local_loader::LocalImageLoadError;
 use super::local_loader::LocalImageLoader;
+use super::local_loader::LocalImageRenderParams;
 
 fn png_fixture(width: u32, height: u32) -> Vec<u8> {
     let mut encoded = Cursor::new(Vec::new());
@@ -15,6 +22,40 @@ fn png_fixture(width: u32, height: u32) -> Vec<u8> {
         .write_to(&mut encoded, image::ImageFormat::Png)
         .expect("encode PNG fixture");
     encoded.into_inner()
+}
+
+fn image_fixture(width: u32, height: u32, format: ImageFormat) -> Vec<u8> {
+    let mut encoded = Cursor::new(Vec::new());
+    DynamicImage::ImageRgba8(RgbaImage::from_pixel(
+        width,
+        height,
+        Rgba([20, 80, 160, 255]),
+    ))
+    .write_to(&mut encoded, format)
+    .expect("encode image fixture");
+    encoded.into_inner()
+}
+
+fn animated_gif_fixture() -> Vec<u8> {
+    let mut encoded = Vec::new();
+    {
+        let mut encoder = GifEncoder::new(&mut encoded);
+        encoder
+            .encode_frame(Frame::new(RgbaImage::from_pixel(
+                /*width*/ 2,
+                /*height*/ 1,
+                Rgba([255, 0, 0, 255]),
+            )))
+            .expect("encode first GIF frame");
+        encoder
+            .encode_frame(Frame::new(RgbaImage::from_pixel(
+                /*width*/ 2,
+                /*height*/ 1,
+                Rgba([0, 0, 255, 255]),
+            )))
+            .expect("encode second GIF frame");
+    }
+    encoded
 }
 
 fn limits() -> LocalImageLimits {
@@ -30,6 +71,10 @@ fn limits() -> LocalImageLimits {
     }
 }
 
+fn render_params() -> LocalImageRenderParams {
+    LocalImageRenderParams::new(/*max_width*/ 2, /*max_height*/ 2)
+}
+
 #[tokio::test]
 async fn local_png_loader_decodes_resizes_and_reuses_cached_result() {
     let dir = tempfile::tempdir().expect("temporary image directory");
@@ -37,8 +82,14 @@ async fn local_png_loader_decodes_resizes_and_reuses_cached_result() {
     std::fs::write(&path, png_fixture(/*width*/ 4, /*height*/ 2)).expect("write PNG fixture");
     let loader = LocalImageLoader::new(limits());
 
-    let first = loader.load_png(&path).await.expect("load local PNG");
-    let cached = loader.load_png(&path).await.expect("load cached local PNG");
+    let first = loader
+        .load_image(&path, render_params())
+        .await
+        .expect("load local PNG");
+    let cached = loader
+        .load_image(&path, render_params())
+        .await
+        .expect("load cached local PNG");
 
     assert_eq!((first.source_width, first.source_height), (4, 2));
     assert_eq!((first.width, first.height), (2, 1));
@@ -56,7 +107,7 @@ async fn local_png_loader_rejects_source_and_decoded_pixel_limits() {
     let mut byte_limits = limits();
     byte_limits.max_source_bytes = fixture.len() - 1;
     let byte_error = LocalImageLoader::new(byte_limits)
-        .load_png(&path)
+        .load_image(&path, render_params())
         .await
         .expect_err("reject oversized source bytes");
     assert_eq!(
@@ -70,7 +121,7 @@ async fn local_png_loader_rejects_source_and_decoded_pixel_limits() {
     let mut pixel_limits = limits();
     pixel_limits.max_decoded_pixels = 7;
     let pixel_error = LocalImageLoader::new(pixel_limits)
-        .load_png(&path)
+        .load_image(&path, render_params())
         .await
         .expect_err("reject oversized decoded dimensions");
     assert_eq!(
@@ -94,13 +145,16 @@ async fn local_png_loader_evicts_least_recently_used_entry() {
         .expect("write second PNG fixture");
     let loader = LocalImageLoader::new(limits());
 
-    let first = loader.load_png(&first_path).await.expect("load first PNG");
+    let first = loader
+        .load_image(&first_path, render_params())
+        .await
+        .expect("load first PNG");
     loader
-        .load_png(&second_path)
+        .load_image(&second_path, render_params())
         .await
         .expect("load second PNG");
     let reloaded = loader
-        .load_png(&first_path)
+        .load_image(&first_path, render_params())
         .await
         .expect("reload evicted first PNG");
 
@@ -117,9 +171,81 @@ async fn local_png_loader_rejects_malformed_body_after_signature() {
     )
     .expect("write malformed PNG fixture");
     let error = LocalImageLoader::new(limits())
-        .load_png(&path)
+        .load_image(&path, render_params())
         .await
         .expect_err("reject malformed PNG body");
 
     assert!(matches!(error, LocalImageLoadError::InvalidPng { .. }));
+}
+
+#[tokio::test]
+async fn local_image_loader_decodes_supported_formats_and_uses_first_gif_frame() {
+    let dir = tempfile::tempdir().expect("temporary image directory");
+    let cases = [
+        (
+            "diagram.jpg",
+            image_fixture(3, 2, ImageFormat::Jpeg),
+            (3, 2),
+        ),
+        (
+            "diagram.webp",
+            image_fixture(3, 2, ImageFormat::WebP),
+            (3, 2),
+        ),
+        ("diagram.gif", animated_gif_fixture(), (2, 1)),
+    ];
+    let mut format_limits = limits();
+    format_limits.max_output_dimension = 8;
+    let loader = LocalImageLoader::new(format_limits);
+
+    for (name, fixture, expected_dimensions) in cases {
+        let path = dir.path().join(name);
+        std::fs::write(&path, fixture).expect("write supported image fixture");
+        let loaded = loader
+            .load_image(
+                &path,
+                LocalImageRenderParams::new(/*max_width*/ 8, /*max_height*/ 8),
+            )
+            .await
+            .expect("load supported local image");
+        let prepared = image::load_from_memory_with_format(&loaded.bytes, ImageFormat::Png)
+            .expect("prepared image must be PNG");
+
+        assert!(loaded.bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert!(!loaded.can_use_source_file);
+        assert_eq!(prepared.dimensions(), expected_dimensions);
+        if name.ends_with(".gif") {
+            assert_eq!(prepared.get_pixel(0, 0), Rgba([255, 0, 0, 255]));
+        }
+    }
+}
+
+#[tokio::test]
+async fn local_image_cache_key_includes_render_params() {
+    let dir = tempfile::tempdir().expect("temporary image directory");
+    let path = dir.path().join("diagram.png");
+    std::fs::write(&path, png_fixture(/*width*/ 4, /*height*/ 2)).expect("write PNG fixture");
+    let mut test_limits = limits();
+    test_limits.max_cache_entries = 4;
+    let loader = LocalImageLoader::new(test_limits);
+    let wide_params = LocalImageRenderParams::new(/*max_width*/ 2, /*max_height*/ 2);
+    let small_params = LocalImageRenderParams::new(/*max_width*/ 1, /*max_height*/ 1);
+
+    let wide = loader
+        .load_image(&path, wide_params)
+        .await
+        .expect("load wide prepared image");
+    let small = loader
+        .load_image(&path, small_params)
+        .await
+        .expect("load small prepared image");
+    let cached_wide = loader
+        .load_image(&path, wide_params)
+        .await
+        .expect("reuse wide prepared image");
+
+    assert_eq!((wide.width, wide.height), (2, 1));
+    assert_eq!((small.width, small.height), (1, 1));
+    assert!(!Arc::ptr_eq(&wide.bytes, &small.bytes));
+    assert!(Arc::ptr_eq(&wide.bytes, &cached_wide.bytes));
 }

@@ -34,6 +34,7 @@ fn loaded_fixture(bytes: Vec<u8>) -> LoadedLocalImage {
         source_height: 1,
         width: 1,
         height: 1,
+        can_use_source_file: true,
     }
 }
 
@@ -134,7 +135,7 @@ fn kitty_writer_skips_remote_sources_without_emitting_protocol_bytes_for_them() 
 
 #[test]
 #[serial]
-fn kitty_writer_skips_local_files_without_a_png_signature() {
+fn kitty_writer_skips_unavailable_local_image() {
     let dir = tempfile::tempdir().expect("temporary image directory");
     let path = dir.path().join("not-really.png");
     fs::write(&path, b"plain text").expect("write non-PNG fixture");
@@ -232,4 +233,36 @@ fn iterm2_writer_restores_cursor_without_suppressing_protocol_cursor_movement() 
     assert!(output.contains("\x1b[6;5H"));
     assert_eq!(report.placed, 1);
     assert_eq!(report.skipped, 0);
+}
+
+#[test]
+#[serial]
+fn kitty_local_file_writer_uses_prepared_png_bytes_when_source_cannot_be_reused() {
+    let dir = tempfile::tempdir().expect("temporary image directory");
+    let path = dir.path().join("diagram.jpg");
+    fs::write(&path, b"source bytes are not used by the injected writer")
+        .expect("write source fixture");
+    let cell_id = MediaCellId::new(28).expect("non-zero media cell id");
+    let mut registry = MediaPlacementRegistry::default();
+    let update = registry.replace_active(vec![local_request(
+        cell_id,
+        path.to_string_lossy().into_owned(),
+        Rect::new(
+            /*x*/ 2, /*y*/ 3, /*width*/ 10, /*height*/ 3,
+        ),
+    )]);
+    let mut output = Vec::new();
+    let mut loaded = loaded_fixture(png_fixture());
+    loaded.can_use_source_file = false;
+
+    let report =
+        write_media_placement_update(&mut output, ImageProtocol::KittyLocalFile, &update, |_| {
+            MediaImageState::Ready(loaded.clone())
+        })
+        .expect("write prepared PNG bytes for non-reusable source");
+    let output = String::from_utf8(output).expect("Kitty commands are UTF-8");
+
+    assert!(output.contains("a=T,t=d,f=100,c=10,r=3,q=2"));
+    assert!(!output.contains("a=T,t=f,f=100"));
+    assert_eq!(report.placed, 1);
 }

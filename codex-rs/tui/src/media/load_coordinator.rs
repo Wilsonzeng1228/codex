@@ -16,6 +16,7 @@ use super::local_loader::LoadedLocalImage;
 use super::local_loader::LocalImageLimits;
 use super::local_loader::LocalImageLoadError;
 use super::local_loader::LocalImageLoader;
+use super::local_loader::LocalImageRenderParams;
 use super::placement::MediaAnchor;
 use super::placement::RegisteredMediaPlacement;
 use super::resolve_image_source;
@@ -93,7 +94,11 @@ impl MediaLoadCoordinator {
         let loader = LocalImageLoader::new(LocalImageLimits::default());
         let loader = Arc::new(move |path: PathBuf| -> LocalImageLoadFuture {
             let loader = loader.clone();
-            Box::pin(async move { loader.load_png(&path).await })
+            Box::pin(async move {
+                loader
+                    .load_image(&path, LocalImageRenderParams::default())
+                    .await
+            })
         });
         Self::with_loader(frame_requester, DEFAULT_MAX_CONCURRENT_LOADS, loader)
     }

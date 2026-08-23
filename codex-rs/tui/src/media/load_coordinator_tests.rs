@@ -28,6 +28,7 @@ fn loaded_image() -> LoadedLocalImage {
         source_height: 1,
         width: 1,
         height: 1,
+        can_use_source_file: true,
     }
 }
 

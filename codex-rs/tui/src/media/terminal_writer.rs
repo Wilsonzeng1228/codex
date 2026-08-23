@@ -94,7 +94,21 @@ pub(crate) fn prepare_media_placement_update(
                 Some(placement.id),
             )?,
             ImageProtocol::KittyLocalFile => {
-                kitty_transmit_png_file_with_id(&path, rect.width, rect.height, Some(placement.id))?
+                if loaded.can_use_source_file {
+                    kitty_transmit_png_file_with_id(
+                        &path,
+                        rect.width,
+                        rect.height,
+                        Some(placement.id),
+                    )?
+                } else {
+                    kitty_transmit_png_bytes_with_id(
+                        &loaded.bytes,
+                        rect.width,
+                        rect.height,
+                        Some(placement.id),
+                    )?
+                }
             }
             ImageProtocol::Sixel => unreachable!("Sixel rejected above"),
         };
@@ -108,7 +122,7 @@ pub(crate) fn prepare_media_placement_update(
 
 /// Emits one lifecycle update to an injected terminal sink.
 ///
-/// 当前只处理静态本地 PNG。文件先经过有界解码、缩放和缓存准备；远程来源或无效路径继续
+/// 当前处理静态本地 PNG/JPEG/WebP 和 GIF 首帧。文件先经过有界解码、缩放和缓存准备；远程来源或无效路径继续
 /// 使用文本降级。请求对象保持只读，因此终端协议字节不会回写 Ratatui 行或持久化 transcript。
 pub(crate) fn write_media_placement_update(
     writer: &mut impl Write,

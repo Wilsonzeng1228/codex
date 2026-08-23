@@ -11,7 +11,8 @@ use std::time::SystemTime;
 
 use image::DynamicImage;
 use image::ImageDecoder;
-use image::codecs::png::PngDecoder;
+use image::ImageFormat;
+use image::ImageReader;
 use image::imageops::FilterType;
 use thiserror::Error;
 
@@ -51,6 +52,35 @@ impl Default for LocalImageLimits {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LocalImageRenderParams {
+    max_width: u32,
+    max_height: u32,
+}
+
+impl LocalImageRenderParams {
+    pub(crate) fn new(max_width: u32, max_height: u32) -> Self {
+        Self {
+            max_width: max_width.max(1),
+            max_height: max_height.max(1),
+        }
+    }
+
+    fn constrained_by(self, max_dimension: u32) -> Self {
+        let max_dimension = max_dimension.max(1);
+        Self::new(
+            self.max_width.min(max_dimension),
+            self.max_height.min(max_dimension),
+        )
+    }
+}
+
+impl Default for LocalImageRenderParams {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_OUTPUT_DIMENSION, DEFAULT_MAX_OUTPUT_DIMENSION)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LoadedLocalImage {
     pub(crate) bytes: Arc<[u8]>,
@@ -58,6 +88,7 @@ pub(crate) struct LoadedLocalImage {
     pub(crate) source_height: u32,
     pub(crate) width: u32,
     pub(crate) height: u32,
+    pub(crate) can_use_source_file: bool,
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -72,6 +103,10 @@ pub(crate) enum LocalImageLoadError {
     SourceTooLarge { size: usize, max: usize },
     #[error("local image is not a PNG: {message}")]
     InvalidPng { message: String },
+    #[error("local image format is not supported: {format}")]
+    UnsupportedFormat { format: String },
+    #[error("local image is invalid: {message}")]
+    InvalidImage { message: String },
     #[error("local image dimensions {width}x{height} exceed maximum {max_dimension}")]
     DimensionLimitExceeded {
         width: u32,
@@ -84,7 +119,7 @@ pub(crate) enum LocalImageLoadError {
         height: u32,
         max_pixels: u64,
     },
-    #[error("failed to decode local PNG {path}: {message}")]
+    #[error("failed to decode local image {path}: {message}")]
     Decode { path: PathBuf, message: String },
     #[error("failed to encode prepared local PNG: {message}")]
     Encode { message: String },
@@ -101,6 +136,7 @@ struct LocalImageCacheKey {
     path: PathBuf,
     file_len: u64,
     modified: Option<SystemTime>,
+    render_params: LocalImageRenderParams,
 }
 
 #[derive(Debug, Default)]
@@ -162,15 +198,18 @@ impl LocalImageLoader {
         }
     }
 
-    /// Load and prepare a PNG without blocking the async caller's executor thread.
-    pub(crate) async fn load_png(
+    /// Load a supported local image and prepare a static PNG without blocking the executor thread.
+    pub(crate) async fn load_image(
         &self,
         path: &Path,
+        render_params: LocalImageRenderParams,
     ) -> Result<LoadedLocalImage, LocalImageLoadError> {
         let path = path.to_path_buf();
         let limits = self.limits;
+        let render_params = render_params.constrained_by(limits.max_output_dimension);
         let cache = Arc::clone(&self.cache);
-        let task = tokio::task::spawn_blocking(move || load_png(path, limits, &cache));
+        let task =
+            tokio::task::spawn_blocking(move || load_image(path, limits, render_params, &cache));
         match tokio::time::timeout(limits.load_timeout, task).await {
             Ok(Ok(result)) => result,
             Ok(Err(error)) => Err(LocalImageLoadError::Worker {
@@ -187,9 +226,10 @@ impl LocalImageLoader {
     }
 }
 
-fn load_png(
+fn load_image(
     path: PathBuf,
     limits: LocalImageLimits,
+    render_params: LocalImageRenderParams,
     cache: &Mutex<LocalImageCache>,
 ) -> Result<LoadedLocalImage, LocalImageLoadError> {
     let canonical_path = std::fs::canonicalize(&path).map_err(|error| LocalImageLoadError::Io {
@@ -218,6 +258,7 @@ fn load_png(
         path: canonical_path.clone(),
         file_len: metadata.len(),
         modified: metadata.modified().ok(),
+        render_params,
     };
     if let Some(image) = cache_lock(cache).get(&key) {
         return Ok(image);
@@ -242,11 +283,31 @@ fn load_png(
         });
     }
 
-    let decoder = PngDecoder::new(Cursor::new(bytes.as_slice())).map_err(|error| {
-        LocalImageLoadError::InvalidPng {
+    let format =
+        image::guess_format(&bytes).map_err(|error| LocalImageLoadError::InvalidImage {
             message: error.to_string(),
-        }
-    })?;
+        })?;
+    if !matches!(
+        format,
+        ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::Gif | ImageFormat::WebP
+    ) {
+        return Err(LocalImageLoadError::UnsupportedFormat {
+            format: format!("{format:?}"),
+        });
+    }
+    let decoder = ImageReader::with_format(Cursor::new(bytes.as_slice()), format)
+        .into_decoder()
+        .map_err(|error| {
+            if format == ImageFormat::Png {
+                LocalImageLoadError::InvalidPng {
+                    message: error.to_string(),
+                }
+            } else {
+                LocalImageLoadError::InvalidImage {
+                    message: error.to_string(),
+                }
+            }
+        })?;
     let (source_width, source_height) = decoder.dimensions();
     if source_width > limits.max_dimension || source_height > limits.max_dimension {
         return Err(LocalImageLoadError::DimensionLimitExceeded {
@@ -269,21 +330,25 @@ fn load_png(
             path: canonical_path.clone(),
             message: error.to_string(),
         })?;
-    let (prepared_bytes, width, height) = if source_width > limits.max_output_dimension
-        || source_height > limits.max_output_dimension
-    {
-        let resized = decoded.resize(
-            limits.max_output_dimension.max(1),
-            limits.max_output_dimension.max(1),
-            FilterType::Triangle,
-        );
+    let needs_resize =
+        source_width > render_params.max_width || source_height > render_params.max_height;
+    let (prepared_bytes, width, height) = if needs_resize || format != ImageFormat::Png {
+        let prepared = if needs_resize {
+            decoded.resize(
+                render_params.max_width,
+                render_params.max_height,
+                FilterType::Triangle,
+            )
+        } else {
+            decoded
+        };
         let mut encoded = Cursor::new(Vec::new());
-        resized
+        prepared
             .write_to(&mut encoded, image::ImageFormat::Png)
             .map_err(|error| LocalImageLoadError::Encode {
                 message: error.to_string(),
             })?;
-        (encoded.into_inner(), resized.width(), resized.height())
+        (encoded.into_inner(), prepared.width(), prepared.height())
     } else {
         (bytes, source_width, source_height)
     };
@@ -300,6 +365,7 @@ fn load_png(
         source_height,
         width,
         height,
+        can_use_source_file: format == ImageFormat::Png && !needs_resize,
     };
     cache_lock(cache).insert(key, image.clone(), limits);
     Ok(image)
