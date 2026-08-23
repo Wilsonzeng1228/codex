@@ -5,8 +5,6 @@ mod local_loader;
 mod node;
 mod placement;
 mod protocol;
-// This policy boundary intentionally lands before its DNS-pinning production adapter.
-#[allow(dead_code)]
 mod remote_loader;
 mod resolver;
 mod terminal_writer;

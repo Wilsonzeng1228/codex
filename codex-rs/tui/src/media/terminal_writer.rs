@@ -67,7 +67,7 @@ pub(crate) fn prepare_media_placement_update(
         let source = match &placement.request.request.node {
             MediaNode::Image { source, .. } => source,
         };
-        let Ok(ImageSource::Local(path)) = resolve_image_source(source) else {
+        let Ok(source) = resolve_image_source(source) else {
             prepared.report.skipped += 1;
             continue;
         };
@@ -94,9 +94,11 @@ pub(crate) fn prepare_media_placement_update(
                 Some(placement.id),
             )?,
             ImageProtocol::KittyLocalFile => {
-                if loaded.can_use_source_file {
+                if let ImageSource::Local(path) = &source
+                    && loaded.can_use_source_file
+                {
                     kitty_transmit_png_file_with_id(
-                        &path,
+                        path,
                         rect.width,
                         rect.height,
                         Some(placement.id),
@@ -122,8 +124,8 @@ pub(crate) fn prepare_media_placement_update(
 
 /// Emits one lifecycle update to an injected terminal sink.
 ///
-/// 当前处理静态本地 PNG/JPEG/WebP 和 GIF 首帧。文件先经过有界解码、缩放和缓存准备；远程来源或无效路径继续
-/// 使用文本降级。请求对象保持只读，因此终端协议字节不会回写 Ratatui 行或持久化 transcript。
+/// 当前处理静态本地 PNG/JPEG/WebP、GIF 首帧和经过安全下载的 HTTPS 图片。来源先经过有界解码与缩放；
+/// 无效或未准备好的来源继续使用文本降级。请求对象保持只读，因此终端协议字节不会回写 Ratatui 行或持久化 transcript。
 pub(crate) fn write_media_placement_update(
     writer: &mut impl Write,
     protocol: ImageProtocol,

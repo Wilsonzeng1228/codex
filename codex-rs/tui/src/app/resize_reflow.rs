@@ -439,7 +439,7 @@ impl App {
             tracing::debug!(
                 active_ready = media_completion.active_ready,
                 history_ready = media_completion.history_ready,
-                "local chat media became ready"
+                "chat media became ready"
             );
         }
         let should_rebuild_transcript = self.handle_draw_size_change(

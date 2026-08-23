@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use url::Url;
 
 use super::ImageSource;
 use super::MediaId;
@@ -19,6 +20,10 @@ use super::local_loader::LocalImageLoader;
 use super::local_loader::LocalImageRenderParams;
 use super::placement::MediaAnchor;
 use super::placement::RegisteredMediaPlacement;
+use super::remote_loader::PinnedRemoteImageHttpClient;
+use super::remote_loader::RemoteImageDownloadError;
+use super::remote_loader::RemoteImageLoader;
+use super::remote_loader::SystemRemoteImageDnsResolver;
 use super::resolve_image_source;
 use crate::tui::FrameRequester;
 
@@ -27,6 +32,10 @@ const DEFAULT_MAX_CONCURRENT_LOADS: usize = 2;
 pub(crate) type LocalImageLoadFuture =
     Pin<Box<dyn Future<Output = Result<LoadedLocalImage, LocalImageLoadError>> + Send + 'static>>;
 pub(crate) type LocalImageLoadFn = dyn Fn(PathBuf) -> LocalImageLoadFuture + Send + Sync;
+pub(crate) type RemoteImageLoadFuture = Pin<
+    Box<dyn Future<Output = Result<LoadedLocalImage, RemoteImageDownloadError>> + Send + 'static>,
+>;
+pub(crate) type RemoteImageLoadFn = dyn Fn(Url) -> RemoteImageLoadFuture + Send + Sync;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MediaPlacementDomain {
@@ -56,7 +65,13 @@ struct MediaWaiter {
 #[derive(Debug)]
 enum LoadOutcome {
     Ready(LoadedLocalImage),
-    Failed(LocalImageLoadError),
+    Failed(MediaImageLoadError),
+}
+
+#[derive(Debug)]
+enum MediaImageLoadError {
+    Local(LocalImageLoadError),
+    Remote(RemoteImageDownloadError),
 }
 
 struct SourceLoad {
@@ -67,24 +82,25 @@ struct SourceLoad {
 }
 
 struct CompletedLoad {
-    path: PathBuf,
+    source: ImageSource,
     generation: u64,
-    result: Result<LoadedLocalImage, LocalImageLoadError>,
+    result: Result<LoadedLocalImage, MediaImageLoadError>,
 }
 
-/// Coordinates bounded local image work outside the synchronous draw and history writer paths.
+/// Coordinates bounded local and remote image work outside synchronous terminal paths.
 ///
 /// Placements for the same normalized source share one worker. Stable media anchors retain ready
 /// results across redraw and reflow, while retirement detaches waiters and aborts tasks that no
 /// longer have a consumer. A generation check rejects completions queued before retirement.
 pub(crate) struct MediaLoadCoordinator {
-    loader: Arc<LocalImageLoadFn>,
+    local_loader: Arc<LocalImageLoadFn>,
+    remote_loader: Arc<RemoteImageLoadFn>,
     semaphore: Arc<Semaphore>,
     frame_requester: FrameRequester,
     completion_tx: mpsc::UnboundedSender<CompletedLoad>,
     completion_rx: mpsc::UnboundedReceiver<CompletedLoad>,
-    sources: HashMap<PathBuf, SourceLoad>,
-    anchor_paths: HashMap<MediaAnchor, PathBuf>,
+    sources: HashMap<ImageSource, SourceLoad>,
+    anchor_sources: HashMap<MediaAnchor, ImageSource>,
     id_anchors: HashMap<MediaId, MediaAnchor>,
     next_generation: u64,
 }
@@ -100,23 +116,54 @@ impl MediaLoadCoordinator {
                     .await
             })
         });
-        Self::with_loader(frame_requester, DEFAULT_MAX_CONCURRENT_LOADS, loader)
+        let remote_loader = RemoteImageLoader::<
+            SystemRemoteImageDnsResolver,
+            PinnedRemoteImageHttpClient,
+        >::production();
+        let remote_loader = Arc::new(move |url: Url| -> RemoteImageLoadFuture {
+            let loader = remote_loader.clone();
+            Box::pin(async move {
+                loader
+                    .download(url.as_str(), LocalImageRenderParams::default())
+                    .await
+            })
+        });
+        Self::with_loaders(
+            frame_requester,
+            DEFAULT_MAX_CONCURRENT_LOADS,
+            loader,
+            remote_loader,
+        )
     }
 
+    #[cfg(test)]
     pub(crate) fn with_loader(
         frame_requester: FrameRequester,
         max_concurrent: usize,
         loader: Arc<LocalImageLoadFn>,
     ) -> Self {
+        let remote_loader = Arc::new(move |_url: Url| -> RemoteImageLoadFuture {
+            Box::pin(async move { Err(RemoteImageDownloadError::ExpectedHttps) })
+        });
+        Self::with_loaders(frame_requester, max_concurrent, loader, remote_loader)
+    }
+
+    pub(crate) fn with_loaders(
+        frame_requester: FrameRequester,
+        max_concurrent: usize,
+        local_loader: Arc<LocalImageLoadFn>,
+        remote_loader: Arc<RemoteImageLoadFn>,
+    ) -> Self {
         let (completion_tx, completion_rx) = mpsc::unbounded_channel();
         Self {
-            loader,
+            local_loader,
+            remote_loader,
             semaphore: Arc::new(Semaphore::new(max_concurrent.max(1))),
             frame_requester,
             completion_tx,
             completion_rx,
             sources: HashMap::new(),
-            anchor_paths: HashMap::new(),
+            anchor_sources: HashMap::new(),
             id_anchors: HashMap::new(),
             next_generation: 0,
         }
@@ -138,7 +185,7 @@ impl MediaLoadCoordinator {
     pub(crate) fn poll_completed(&mut self) -> MediaLoadCompletion {
         let mut completion = MediaLoadCompletion::default();
         while let Ok(loaded) = self.completion_rx.try_recv() {
-            let Some(source) = self.sources.get_mut(&loaded.path) else {
+            let Some(source) = self.sources.get_mut(&loaded.source) else {
                 continue;
             };
             if source.generation != loaded.generation {
@@ -156,7 +203,14 @@ impl MediaLoadCoordinator {
                     source.outcome = Some(LoadOutcome::Ready(image));
                 }
                 Err(error) => {
-                    tracing::debug!(path = %loaded.path.display(), %error, "failed to prepare local chat image");
+                    match &error {
+                        MediaImageLoadError::Local(error) => {
+                            tracing::debug!(source = ?loaded.source, %error, "failed to prepare local chat image");
+                        }
+                        MediaImageLoadError::Remote(error) => {
+                            tracing::debug!(source = ?loaded.source, %error, "failed to prepare remote chat image");
+                        }
+                    }
                     source.outcome = Some(LoadOutcome::Failed(error));
                 }
             }
@@ -165,10 +219,10 @@ impl MediaLoadCoordinator {
     }
 
     pub(crate) fn image_state(&self, placement: &RegisteredMediaPlacement) -> MediaImageState {
-        let Some(path) = self.anchor_paths.get(&placement.request.anchor) else {
+        let Some(source_key) = self.anchor_sources.get(&placement.request.anchor) else {
             return MediaImageState::Unavailable;
         };
-        let Some(source) = self.sources.get(path) else {
+        let Some(source) = self.sources.get(source_key) else {
             return MediaImageState::Unavailable;
         };
         let Some(waiter) = source.waiters.get(&placement.request.anchor) else {
@@ -202,15 +256,15 @@ impl MediaLoadCoordinator {
         let source = match &placement.request.request.node {
             MediaNode::Image { source, .. } => source,
         };
-        let Ok(ImageSource::Local(path)) = resolve_image_source(source) else {
+        let Ok(source) = resolve_image_source(source) else {
             self.detach_id(placement.id);
             return;
         };
         let anchor = placement.request.anchor;
         if self
-            .anchor_paths
+            .anchor_sources
             .get(&anchor)
-            .is_some_and(|current| current != &path)
+            .is_some_and(|current| current != &source)
         {
             self.detach_anchor(anchor);
         }
@@ -222,10 +276,10 @@ impl MediaLoadCoordinator {
             self.detach_id(placement.id);
         }
 
-        self.anchor_paths.insert(anchor, path.clone());
+        self.anchor_sources.insert(anchor, source.clone());
         self.id_anchors.insert(placement.id, anchor);
-        if let Some(source) = self.sources.get_mut(&path) {
-            source.waiters.insert(
+        if let Some(source_load) = self.sources.get_mut(&source) {
+            source_load.waiters.insert(
                 anchor,
                 MediaWaiter {
                     id: placement.id,
@@ -237,9 +291,9 @@ impl MediaLoadCoordinator {
 
         self.next_generation = self.next_generation.wrapping_add(1);
         let generation = self.next_generation;
-        let task = self.spawn_load(path.clone(), generation);
+        let task = self.spawn_load(source.clone(), generation);
         self.sources.insert(
-            path,
+            source,
             SourceLoad {
                 generation,
                 waiters: HashMap::from([(
@@ -255,8 +309,9 @@ impl MediaLoadCoordinator {
         );
     }
 
-    fn spawn_load(&self, path: PathBuf, generation: u64) -> JoinHandle<()> {
-        let loader = Arc::clone(&self.loader);
+    fn spawn_load(&self, source: ImageSource, generation: u64) -> JoinHandle<()> {
+        let local_loader = Arc::clone(&self.local_loader);
+        let remote_loader = Arc::clone(&self.remote_loader);
         let semaphore = Arc::clone(&self.semaphore);
         let completion_tx = self.completion_tx.clone();
         let frame_requester = self.frame_requester.clone();
@@ -264,10 +319,17 @@ impl MediaLoadCoordinator {
             let Ok(_permit) = semaphore.acquire_owned().await else {
                 return;
             };
-            let result = loader(path.clone()).await;
+            let result = match source.clone() {
+                ImageSource::Local(path) => {
+                    local_loader(path).await.map_err(MediaImageLoadError::Local)
+                }
+                ImageSource::Https(url) => remote_loader(url)
+                    .await
+                    .map_err(MediaImageLoadError::Remote),
+            };
             if completion_tx
                 .send(CompletedLoad {
-                    path,
+                    source,
                     generation,
                     result,
                 })
@@ -287,15 +349,15 @@ impl MediaLoadCoordinator {
 
     fn detach_anchor(&mut self, anchor: MediaAnchor) {
         self.id_anchors.retain(|_, current| *current != anchor);
-        let Some(path) = self.anchor_paths.remove(&anchor) else {
+        let Some(source_key) = self.anchor_sources.remove(&anchor) else {
             return;
         };
-        let remove_source = self.sources.get_mut(&path).is_some_and(|source| {
+        let remove_source = self.sources.get_mut(&source_key).is_some_and(|source| {
             source.waiters.remove(&anchor);
             source.waiters.is_empty()
         });
         if remove_source
-            && let Some(mut source) = self.sources.remove(&path)
+            && let Some(mut source) = self.sources.remove(&source_key)
             && let Some(task) = source.task.take()
         {
             task.abort();

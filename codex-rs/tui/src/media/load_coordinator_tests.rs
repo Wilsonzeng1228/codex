@@ -14,11 +14,15 @@ use super::MediaCellId;
 use super::MediaNode;
 use super::MediaPlacementRegistry;
 use super::MediaPlacementRequest;
+use super::load_coordinator::LocalImageLoadFn;
 use super::load_coordinator::LocalImageLoadFuture;
+use super::load_coordinator::MediaImageState;
 use super::load_coordinator::MediaLoadCompletion;
 use super::load_coordinator::MediaLoadCoordinator;
 use super::load_coordinator::MediaPlacementDomain;
+use super::load_coordinator::RemoteImageLoadFuture;
 use super::local_loader::LoadedLocalImage;
+use super::remote_loader::RemoteImageDownloadError;
 use crate::tui::FrameRequester;
 
 fn loaded_image() -> LoadedLocalImage {
@@ -46,6 +50,234 @@ fn local_request(cell_id: u64, ordinal: usize, path: PathBuf) -> AnchoredMediaPl
             ),
         },
     )
+}
+
+fn https_request(cell_id: u64, ordinal: usize, source: &str) -> AnchoredMediaPlacementRequest {
+    AnchoredMediaPlacementRequest::new(
+        MediaCellId::new(cell_id).expect("non-zero cell id"),
+        MediaPlacementRequest {
+            node: MediaNode::Image {
+                source: source.to_string(),
+                alt: "remote diagram".to_string(),
+                ordinal,
+            },
+            rect: Rect::new(
+                /*x*/ 0, /*y*/ 0, /*width*/ 8, /*height*/ 4,
+            ),
+        },
+    )
+}
+
+fn unused_local_loader() -> Arc<LocalImageLoadFn> {
+    Arc::new(move |_path: PathBuf| -> LocalImageLoadFuture {
+        Box::pin(async move { panic!("remote-only test must not start the local loader") })
+    })
+}
+
+#[tokio::test]
+async fn duplicate_https_sources_share_one_in_flight_load_and_become_ready() {
+    let starts = Arc::new(AtomicUsize::new(0));
+    let release = Arc::new(Notify::new());
+    let loader = {
+        let starts = Arc::clone(&starts);
+        let release = Arc::clone(&release);
+        Arc::new(move |_url: url::Url| -> RemoteImageLoadFuture {
+            let starts = Arc::clone(&starts);
+            let release = Arc::clone(&release);
+            Box::pin(async move {
+                starts.fetch_add(1, Ordering::SeqCst);
+                release.notified().await;
+                Ok(loaded_image())
+            })
+        })
+    };
+    let mut registry = MediaPlacementRegistry::default();
+    let active_update = registry.replace_active(vec![https_request(
+        /*cell_id*/ 10,
+        /*ordinal*/ 0,
+        "https://images.example/diagram.png",
+    )]);
+    let history_update = registry.append_history(vec![https_request(
+        /*cell_id*/ 11,
+        /*ordinal*/ 0,
+        "https://images.example/diagram.png",
+    )]);
+    let active = active_update.placed[0].clone();
+    let history = history_update.placed[0].clone();
+    let (frame_requester, mut frame_rx) = FrameRequester::test_channel();
+    let mut coordinator = MediaLoadCoordinator::with_loaders(
+        frame_requester,
+        /*max_concurrent*/ 2,
+        unused_local_loader(),
+        loader,
+    );
+
+    coordinator.reconcile(&active_update, MediaPlacementDomain::Active);
+    coordinator.reconcile(&history_update, MediaPlacementDomain::History);
+    tokio::task::yield_now().await;
+
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+    assert_eq!(coordinator.image_state(&active), MediaImageState::Pending);
+    assert_eq!(coordinator.image_state(&history), MediaImageState::Pending);
+
+    release.notify_waiters();
+    timeout(Duration::from_secs(1), frame_rx.recv())
+        .await
+        .expect("completed remote load should request a frame")
+        .expect("frame requester should remain connected");
+    assert_eq!(
+        coordinator.poll_completed(),
+        MediaLoadCompletion {
+            active_ready: true,
+            history_ready: true,
+        }
+    );
+    assert!(matches!(
+        coordinator.image_state(&active),
+        MediaImageState::Ready(_)
+    ));
+    assert!(matches!(
+        coordinator.image_state(&history),
+        MediaImageState::Ready(_)
+    ));
+}
+
+#[tokio::test]
+async fn failed_https_load_becomes_unavailable() {
+    let loader = Arc::new(move |_url: url::Url| -> RemoteImageLoadFuture {
+        Box::pin(async move { Err(RemoteImageDownloadError::HttpStatus { status: 404 }) })
+    });
+    let mut registry = MediaPlacementRegistry::default();
+    let update = registry.replace_active(vec![https_request(
+        /*cell_id*/ 12,
+        /*ordinal*/ 0,
+        "https://images.example/missing.png",
+    )]);
+    let placement = update.placed[0].clone();
+    let (frame_requester, mut frame_rx) = FrameRequester::test_channel();
+    let mut coordinator = MediaLoadCoordinator::with_loaders(
+        frame_requester,
+        /*max_concurrent*/ 2,
+        unused_local_loader(),
+        loader,
+    );
+
+    coordinator.reconcile(&update, MediaPlacementDomain::Active);
+    timeout(Duration::from_secs(1), frame_rx.recv())
+        .await
+        .expect("failed remote load should request a frame")
+        .expect("frame requester should remain connected");
+
+    assert_eq!(coordinator.poll_completed(), MediaLoadCompletion::default());
+    assert_eq!(
+        coordinator.image_state(&placement),
+        MediaImageState::Unavailable
+    );
+}
+
+#[tokio::test]
+async fn local_and_https_loads_share_the_concurrency_limit() {
+    let dir = tempfile::tempdir().expect("temporary image directory");
+    let starts = Arc::new(AtomicUsize::new(0));
+    let release = Arc::new(Notify::new());
+    let local_loader = {
+        let starts = Arc::clone(&starts);
+        let release = Arc::clone(&release);
+        Arc::new(move |_path: PathBuf| -> LocalImageLoadFuture {
+            let starts = Arc::clone(&starts);
+            let release = Arc::clone(&release);
+            Box::pin(async move {
+                starts.fetch_add(1, Ordering::SeqCst);
+                release.notified().await;
+                Ok(loaded_image())
+            })
+        })
+    };
+    let remote_loader = {
+        let starts = Arc::clone(&starts);
+        let release = Arc::clone(&release);
+        Arc::new(move |_url: url::Url| -> RemoteImageLoadFuture {
+            let starts = Arc::clone(&starts);
+            let release = Arc::clone(&release);
+            Box::pin(async move {
+                starts.fetch_add(1, Ordering::SeqCst);
+                release.notified().await;
+                Ok(loaded_image())
+            })
+        })
+    };
+    let mut registry = MediaPlacementRegistry::default();
+    let update = registry.replace_active(vec![
+        local_request(
+            /*cell_id*/ 13,
+            /*ordinal*/ 0,
+            dir.path().join("local.png"),
+        ),
+        https_request(
+            /*cell_id*/ 14,
+            /*ordinal*/ 0,
+            "https://images.example/remote.png",
+        ),
+    ]);
+    let (frame_requester, _frame_rx) = FrameRequester::test_channel();
+    let mut coordinator = MediaLoadCoordinator::with_loaders(
+        frame_requester,
+        /*max_concurrent*/ 1,
+        local_loader,
+        remote_loader,
+    );
+
+    coordinator.reconcile(&update, MediaPlacementDomain::Active);
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+
+    release.notify_one();
+    timeout(Duration::from_secs(1), async {
+        while starts.load(Ordering::SeqCst) < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("second source should start after the shared permit is released");
+    assert_eq!(starts.load(Ordering::SeqCst), 2);
+    release.notify_waiters();
+}
+
+#[tokio::test]
+async fn retired_https_placement_ignores_queued_completion() {
+    let loader = Arc::new(move |_url: url::Url| -> RemoteImageLoadFuture {
+        Box::pin(async move { Ok(loaded_image()) })
+    });
+    let mut registry = MediaPlacementRegistry::default();
+    let placed = registry.replace_active(vec![https_request(
+        /*cell_id*/ 15,
+        /*ordinal*/ 0,
+        "https://images.example/stale.png",
+    )]);
+    let placement = placed.placed[0].clone();
+    let retired = registry.replace_active(Vec::new());
+    let (frame_requester, mut frame_rx) = FrameRequester::test_channel();
+    let mut coordinator = MediaLoadCoordinator::with_loaders(
+        frame_requester,
+        /*max_concurrent*/ 2,
+        unused_local_loader(),
+        loader,
+    );
+
+    coordinator.reconcile(&placed, MediaPlacementDomain::Active);
+    timeout(Duration::from_secs(1), frame_rx.recv())
+        .await
+        .expect("completed remote load should request a frame")
+        .expect("frame requester should remain connected");
+    coordinator.reconcile(&retired, MediaPlacementDomain::Active);
+
+    assert_eq!(coordinator.poll_completed(), MediaLoadCompletion::default());
+    assert_eq!(
+        coordinator.image_state(&placement),
+        MediaImageState::Unavailable
+    );
 }
 
 #[tokio::test]

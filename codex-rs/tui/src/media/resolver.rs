@@ -8,7 +8,7 @@ use thiserror::Error;
 use url::Host;
 use url::Url;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ImageSource {
     Local(PathBuf),
     Https(Url),

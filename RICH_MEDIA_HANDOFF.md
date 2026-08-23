@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
-> 更新时间：2026-08-23
-> 当前状态：Phase 1 已完成，Phase 2 继续推进。Windows 版 WezTerm 的静态本地 PNG 真实终端与生命周期验收保持通过；本地 PNG、JPEG、WebP 和 GIF 静态首帧已具备有界读取、完整解码、缩放、内存 LRU 和 TUI 异步加载协调。公网 HTTPS 已建立可注入、逐跳复检的下载安全策略，并具备系统 DNS resolver、直连到已验证 DNS 地址且禁用自动重定向的 production HTTP adapter，以及明确的 production loader 构造入口；`MediaLoadCoordinator` 和 TUI 接入仍未完成。Sixel 和 LaTeX 未开始。
+> 更新时间：2026-08-24
+> 当前状态：Phase 1 已完成，Phase 2 接近完成。Windows 版 WezTerm 的静态本地 PNG 真实终端与生命周期验收保持通过；本地 PNG、JPEG、WebP 和 GIF 静态首帧已具备有界读取、完整解码、缩放、内存 LRU 和 TUI 异步加载协调。公网 HTTPS 已建立可注入、逐跳复检的安全下载策略、production DNS/HTTP 组件，并已接入统一 `MediaLoadCoordinator`、TUI production owner 与 iTerm2/Kitty writer；自动测试已覆盖远程 pending/ready/unavailable、同源去重、共享并发、history reflow 和 retirement。真实 WezTerm HTTPS 视觉验收尚待完成；Sixel 仍为后续可选扩展，LaTeX 未开始。
 
 ## 新对话启动指令
 
@@ -27,7 +27,7 @@
 - 工作仓库：`D:\hermes\agent-repl\codex-rich`
 - 当前分支：`codex/rich-media`
 - 官方基线：`d44696065723a56b9de6538cd6348fcbe6c1542e`
-- 本轮继续开发前 HEAD：`048055686af04d8d2f869b7e60057007729e88e2 feat: 绑定 HTTPS 图片到已验证地址`
+- 本轮继续开发前 HEAD：`1d059b5124ebac47814e2ce27178d98a957ed7d5 feat: 增加远程图片生产 DNS 解析器`
 - 远程仓库只有：`upstream https://github.com/openai/codex.git`
 - 尚无 `origin`：用户还没有提供 fork 地址，不要自行猜测或推送。
 - 父目录的 `D:\hermes\agent-repl\graphify-out` 是未完成的旁路分析产物，没有可查询的 `graph.json`，不属于本仓库，不要加入提交。
@@ -35,6 +35,7 @@
 最近的实现提交（不含本轮待提交变更）：
 
 ```text
+1d059b5124 feat: 增加远程图片生产 DNS 解析器
 048055686a feat: 绑定 HTTPS 图片到已验证地址
 34c4f1669c feat: 建立 HTTPS 图片安全下载边界
 dc0f374d76 feat: 支持更多本地图片格式
@@ -120,7 +121,7 @@ resolver 本身仍只做纯解析，不访问文件和网络。新的远程策�
 - active placement 通过可注入 writer 使用 frame 绝对 `Rect`；history placement 在对应保留行写入 terminal scrollback 时只移动列并立即发送，避免把历史图片绑定到易变化的屏幕绝对 Y。
 - `MediaPlacementUpdate` 已接到现有 `kitty_transmit_png_*` 和 `kitty_delete_image` 抽象；删除先于重放，redraw、resize/reflow、历史清理和 TUI drop 都有明确 retirement 路径。
 - 生产环境可显式设置 `CODEX_TUI_MEDIA_CAPABILITY_OVERRIDE=kitty` 或 `iterm2`；Windows WezTerm 实测必须使用 `iterm2`。占位行由 `CODEX_TUI_MEDIA_PLACEHOLDER_ROWS` 指定，合法范围 1–32，默认 4。未显式启用时仍为 `None`，不会发送聊天媒体协议字节。
-- writer 当前只接受本地来源；loader 按文件 magic 识别 PNG、JPEG、WebP 和 GIF，完整解码后统一准备为 PNG。HTTPS、拒绝来源、未知格式和损坏图片均继续文本降级。协议字节只写入终端 sink，不进入 Ratatui `Line`、raw Markdown、复制文本或持久化 transcript。
+- writer 当前接受本地来源和已经安全下载完成的 HTTPS Ready 状态；两类 loader 都按文件 magic 识别并完整解码，统一准备为 PNG。Pending、拒绝来源、未知格式和损坏图片继续文本降级。协议字节只写入终端 sink，不进入 Ratatui `Line`、raw Markdown、复制文本或持久化 transcript。
 - 注册表的更新结果显式给出 `retired` 与 `added` MediaId，为后续复用 Kitty 删除/发送接口提供边界。
 - 流式 assistant cell 会先写入文本 fallback；final consolidation 若发现媒体节点且 capability 开启，会强制一次 source-backed reflow，使图片占位和 placement 真正进入 history。该缺口已用 `0` placement 的 RED 和 `1` placement 的 GREEN 覆盖。
 - Windows WezTerm 真实日志已证明初次 history placement、三次 resize/reflow 重建和退出 retirement；用户确认图片显示并且上下滚动、调整窗口后无残影。
@@ -132,7 +133,7 @@ resolver 本身仍只做纯解析，不访问文件和网络。新的远程策�
 - 内存 LRU 同时受 32 条记录和 64 MiB 约束；缓存键包含规范化路径、文件长度、修改时间，以及实际影响准备后 PNG 字节的最大输出宽高，命中时复用同一 `Arc<[u8]>`，超限时从最久未使用项开始淘汰。
 - iTerm2 inline 和 Kitty direct-data writer 发送 loader 准备后的 PNG 字节。Kitty local-file 仅在源文件本来就是无需缩放的 PNG 时使用路径引用；非 PNG 或发生缩放时改发准备后的 PNG 字节，避免终端绕过解码结果。
 - 未知格式、只有正确 magic 但正文损坏的图片不再被发送到终端，而是计为 skipped 并保留文本降级。
-- 新增 `MediaLoadCoordinator` 作为 TUI 所有的加载生命周期协调器：默认最多并发 2 个本地加载，同一规范化路径只保留一个 in-flight task，active/history anchor 共享结果。
+- 新增 `MediaLoadCoordinator` 作为 TUI 所有的加载生命周期协调器：默认最多并发 2 个本地或远程加载，同一解析后来源只保留一个 in-flight task，active/history anchor 共享结果和同一并发预算。
 - production writer 现在只消费 `Ready`、`Pending` 或 `Unavailable` 的已准备状态，不再读取文件或解码。加载完成通过 `FrameRequester` 请求新帧；history 完成会触发现有的 source-backed bounded transcript reflow，active-only 完成只需下一帧重绘。
 - task retirement 会移除 anchor waiter；最后一个 waiter 消失时中止 wrapper task，generation 检查会忽略已经排队的过期完成结果。由于 `spawn_blocking` 已开始的系统工作不能保证硬取消，这里只承诺过期结果不会重新进入 placement 生命周期。
 
@@ -144,7 +145,7 @@ resolver 本身仍只做纯解析，不访问文件和网络。新的远程策�
 - 下载字节复用本地 loader 的 magic 判断、完整解码、像素/尺寸/准备后 PNG 上限和缩放逻辑。远程结果永远不能复用源文件路径。
 - pinned adapter 刻意使用 direct/no-proxy 路径：普通 HTTP/HTTPS proxy 会独立解析 CONNECT 目标主机，无法保证连接仍绑定到策略层验证过的 IP。需要代理的环境当前应保持文本降级，后续若支持代理必须另做能保留 TLS SNI/Host 且绑定目标 IP 的安全设计。
 - `SystemRemoteImageDnsResolver` 复用标准库系统解析并通过 `spawn_blocking` 隔离阻塞调用，去重后把解析出的 IP 交给既有逐跳公网校验；`RemoteImageLoader::production()` 明确组合系统 resolver、pinned adapter 和默认资源限制。
-- `MediaLoadCoordinator` 和 terminal writer 仍未接入远程加载；因此不能宣称 TUI 已能显示远程图片。
+- `MediaLoadCoordinator::new()` 现在组合本地 loader 与 production `RemoteImageLoader`，本地和远程来源共享 semaphore、waiter、completion channel 与 generation retirement。远程 Ready 结果由 iTerm2/Kitty direct-data writer 发送准备后的 PNG；即使协议为 Kitty local-file，HTTPS 也永远不能使用 `t=f` 路径引用。
 
 ## 4. 当前架构判断
 
@@ -338,6 +339,14 @@ just test -p codex-tui finalized_markdown_media_layout_reserves_rows_at_each_ima
 - `just fmt` 仍因 Windows 缺少 `tools/buildifier` 在 Bazel/Starlark 阶段报 `[WinError 2]`；随后 `cargo fmt --all -- --check` 退出码 0，仅有 stable Rust 不支持 `imports_granularity=Item` 的提示。
 - 最终 target 为 16.59 GiB，未触及 18 GiB 红线。
 
+2026-08-24 Phase 2 HTTPS 异步 TUI 与 writer 接入：
+
+- coordinator RED 先得到 `E0432`（缺少 `RemoteImageLoadFuture`）和 4 项 `E0599`（缺少 `with_loaders`）；最小实现后 `media::load_coordinator_tests` 8/8 GREEN。
+- coordinator 测试覆盖同一 HTTPS URL 在 active/history 间只启动一次、Pending→Ready、失败→Unavailable、本地与远程共享并发上限、history 完成同时请求 redraw/reflow，以及远程 retirement 后忽略排队完成结果。
+- writer RED 的既有 6 项保持通过，新增 iTerm2 与 Kitty local-file 两项因远程输出为空而失败；移除 HTTPS 前置硬拒绝后 8/8 GREEN。远程 Ready 始终发送准备后的 PNG 字节，Kitty local-file 不会对 URL 使用文件引用。
+- 全部媒体回归 `just test -p codex-tui 'media::'` 为 43/43 通过。完整 `just test -p codex-tui` 共运行 3783 项，3781 项通过、2 项失败、10 项跳过；失败仍是既有项目权限历史测试（得到 `../trusted`）和 pets Kitty local-file 测试（输出包含 `cG5n`），没有新增失败。
+- 所有构建前后均设置 `CARGO_INCREMENTAL=0`、`CARGO_BUILD_JOBS=1` 并检查 target；本单元测试结束时仍为 16.59 GiB，未触及 18 GiB 红线。
+
 ## 7. Windows 构建环境
 
 全局代理指向失效的 `127.0.0.1:7892`。所有需要 Cargo/just 网络访问的命令应只在当前 PowerShell 会话设置以下覆盖，不要修改用户的全局 Git 或代理配置：
@@ -380,7 +389,7 @@ $env:CARGO_INCREMENTAL='0'
 ### 8.2 当前完成：scrollback 锚定基础设施与静态本地 PNG writer
 
 - 注册表的 `retired`/`placed` 已接到终端副作用层，并复用现有 `media::kitty_transmit_png_*`/删除接口；
-- 可注入 writer 已验证删除顺序、active 绝对 `Rect`、远程来源跳过、伪 PNG 跳过和 request 不被协议字节污染；
+- 可注入 writer 已验证删除顺序、active 绝对 `Rect`、远程 Ready 字节发送、远程 Unavailable/伪 PNG 跳过和 request 不被协议字节污染；
 - history writer 在保留行进入 scrollback 时发送，只使用列定位；
 - scoped reflow 保留未参与本次重建的旧 scrollback placement。
 
@@ -400,7 +409,7 @@ Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、re
 - production writer 只消费准备状态，首次文件读取/解码不再阻塞 draw/history writer。
 - 格式按 magic 识别并统一准备为 PNG；缓存键包含影响输出字节的最大宽高参数；Kitty local-file 只复用无需转换的原始 PNG。
 
-### 8.4 已建立公网 HTTPS 下载安全策略与 production 传输组件
+### 8.4 已完成公网 HTTPS 安全下载与异步 TUI 接入
 
 本轮已经完成：
 
@@ -410,15 +419,18 @@ Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、re
 - production HTTP adapter 通过 DNS override 直连已验证地址，关闭自动重定向，并把响应作为受上层读取限制约束的流返回；
 - production DNS resolver 通过系统解析得到 IP，去重后交给既有公网地址校验；
 - `RemoteImageLoader::production()` 明确组合系统 resolver、pinned adapter 与默认限制；
-- 出于 DNS rebinding 边界要求，adapter 当前明确绕过代理；代理兼容不能用普通 CONNECT 主机名重解析替代。
+- 出于 DNS rebinding 边界要求，adapter 当前明确绕过代理；代理兼容不能用普通 CONNECT 主机名重解析替代；
+- `MediaLoadCoordinator` 对解析后的本地路径/HTTPS URL 统一去重，本地和远程共享最大并发 2、completion channel、active/history waiter 和 generation retirement；
+- TUI production owner 构造 production 远程 loader，远程完成会触发下一帧，history 完成复用既有 source-backed bounded reflow；
+- iTerm2 和 Kitty writer 可消费远程 Ready PNG；Kitty local-file 对 HTTPS 强制发送 `t=d` 准备字节，不允许路径引用。
 
-下一最小单元应把 production `RemoteImageLoader` 接入 `MediaLoadCoordinator`，保持本地与远程统一的并发上限、同源 in-flight 去重、completion/reflow 和 retirement generation 语义。先用可注入远程 loader 测试固定 HTTPS anchor 的 pending/ready/unavailable 状态转换，再接 TUI production owner；不要把下载接入 draw 阻塞路径，也不要在同一单元扩展磁盘缓存、Sixel、Kitty Unicode placeholders、LaTeX 或配置界面。
+下一最小单元只做新的真实 Windows WezTerm HTTPS 端到端验收：选择稳定的公网 HTTPS PNG/JPEG URL，确认 finalized history 原位显示、下载期间不阻塞输入、滚动/resize 无残影、失败 URL 保持文本降级；同时用 runtime log 确认 remote Pending→Ready→history reflow。不要重复本地格式 smoke，也不要把 Sixel、Kitty Unicode placeholders、磁盘缓存或 LaTeX 混入该验收单元。完成这项视觉证据后即可按总体规划关闭 Phase 2，准备进入 Phase 3 LaTeX。
 
 ## 9. 尚未完成
 
 - active streaming 瞬间没有单独截图，当前可靠证据集中在 finalized history、滚动、resize/reflow、退出 retirement 与文本降级；
 - 缓存尚无用户清理命令或磁盘层；
-- 已有远程 HTTPS 策略执行器、production DNS resolver 和 pinned HTTP adapter，但尚未接入 `MediaLoadCoordinator` 与 TUI；
+- 远程 HTTPS 已接入 coordinator/TUI/writer，但真实 Windows WezTerm 端到端视觉验收尚未完成；
 - Sixel 编码仍留在 pets 专用实现，尚未完全移入通用媒体层；
 - 媒体节点尚未记录源字节范围；
 - LaTeX 渲染尚未开始；
@@ -430,7 +442,7 @@ Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、re
 |---|---|
 | Phase 0：基线与架构勘察 | 已完成 |
 | Phase 1：图片语法、协议、节点与布局 | 已完成 |
-| Phase 2：本地/远程图片 I/O 与缓存 | 进行中（本地静态格式与异步 UI、HTTPS 安全策略、production DNS resolver 和 pinned HTTP adapter 已完成；协调器与 TUI 接入待做） |
+| Phase 2：本地/远程图片 I/O 与缓存 | 进行中（本地与 HTTPS 生产代码、自动测试均已完成；仅待真实 WezTerm HTTPS 视觉验收） |
 | Phase 3：LaTeX | 待开始 |
 | Phase 4：交互与配置 | 待开始 |
 | Phase 5：文档、技能与验收 | 待开始 |
@@ -452,7 +464,7 @@ Windows 下 `git status --short` 当前会显示：
 - TUI 测试优先 `just test -p codex-tui <filter>`；
 - 新行为必须先写失败测试，确认 RED 后做最小实现并确认 GREEN；
 - 本轮所有文件完成后统一提交，禁止 `git add .`；
-- 本轮建议提交信息：`feat: 增加远程图片生产 DNS 解析器`。
+- 本轮建议提交信息：`feat: 接入 HTTPS 聊天图片显示`。
 
 ## 11. 新对话的起手命令
 
@@ -476,7 +488,7 @@ Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\app\resize_reflow.rs
 Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\tui.rs
 ```
 
-不要重做已经通过的 Windows WezTerm 核心 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、真实 `/resume` 任务切换、空闲 `/clear` retirement、本地异步 TUI 集成、PNG/JPEG/WebP/GIF 静态首帧、HTTPS 策略基础、production DNS resolver 或 pinned HTTP adapter。下一轮继续 Phase 2 时，先重新确认范围、磁盘红线和远程 coordinator/TUI 接入边界。
+不要重做已经通过的 Windows WezTerm 本地图片 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、真实 `/resume` 任务切换、空闲 `/clear` retirement、本地异步 TUI 集成、PNG/JPEG/WebP/GIF 静态首帧、HTTPS 策略基础、production DNS resolver、pinned HTTP adapter 或远程 coordinator/writer 自动测试。下一轮只补真实 WezTerm HTTPS 端到端证据并关闭 Phase 2。
 
 ## 12. Phase 1 完成判据
 

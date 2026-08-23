@@ -111,7 +111,7 @@ fn kitty_writer_deletes_retired_ids_before_replaying_local_png_placement() {
 
 #[test]
 #[serial]
-fn kitty_writer_skips_remote_sources_without_emitting_protocol_bytes_for_them() {
+fn kitty_writer_skips_unavailable_remote_source() {
     let cell_id = MediaCellId::new(23).expect("non-zero media cell id");
     let mut registry = MediaPlacementRegistry::default();
     let update = registry.replace_active(vec![local_request(
@@ -131,6 +131,65 @@ fn kitty_writer_skips_remote_sources_without_emitting_protocol_bytes_for_them() 
     assert!(output.is_empty());
     assert_eq!(report.placed, 0);
     assert_eq!(report.skipped, 1);
+}
+
+#[test]
+#[serial]
+fn iterm2_writer_transmits_ready_https_image_bytes() {
+    let cell_id = MediaCellId::new(29).expect("non-zero media cell id");
+    let mut registry = MediaPlacementRegistry::default();
+    let update = registry.replace_active(vec![local_request(
+        cell_id,
+        "https://example.com/diagram.png".to_string(),
+        Rect::new(
+            /*x*/ 2, /*y*/ 3, /*width*/ 10, /*height*/ 3,
+        ),
+    )]);
+    let fixture = png_fixture();
+    let loaded = loaded_fixture(fixture.clone());
+    let mut output = Vec::new();
+
+    let report =
+        write_media_placement_update(&mut output, ImageProtocol::Iterm2Inline, &update, |_| {
+            MediaImageState::Ready(loaded.clone())
+        })
+        .expect("write downloaded HTTPS image bytes");
+    let output = String::from_utf8(output).expect("iTerm2 command is UTF-8");
+
+    assert!(output.contains(&format!(
+        "\x1b]1337;File=size={};width=10;height=3;inline=1:",
+        fixture.len()
+    )));
+    assert_eq!(report.placed, 1);
+    assert_eq!(report.skipped, 0);
+}
+
+#[test]
+#[serial]
+fn kitty_local_file_writer_sends_ready_https_image_as_data() {
+    let cell_id = MediaCellId::new(30).expect("non-zero media cell id");
+    let mut registry = MediaPlacementRegistry::default();
+    let update = registry.replace_active(vec![local_request(
+        cell_id,
+        "https://example.com/diagram.png".to_string(),
+        Rect::new(
+            /*x*/ 2, /*y*/ 3, /*width*/ 10, /*height*/ 3,
+        ),
+    )]);
+    let loaded = loaded_fixture(png_fixture());
+    let mut output = Vec::new();
+
+    let report =
+        write_media_placement_update(&mut output, ImageProtocol::KittyLocalFile, &update, |_| {
+            MediaImageState::Ready(loaded.clone())
+        })
+        .expect("write downloaded HTTPS image bytes");
+    let output = String::from_utf8(output).expect("Kitty command is UTF-8");
+
+    assert!(output.contains("a=T,t=d,f=100,c=10,r=3,q=2"));
+    assert!(!output.contains("a=T,t=f,f=100"));
+    assert_eq!(report.placed, 1);
+    assert_eq!(report.skipped, 0);
 }
 
 #[test]
