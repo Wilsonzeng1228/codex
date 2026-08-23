@@ -1,5 +1,4 @@
 use std::io::Write;
-use std::sync::LazyLock;
 
 use anyhow::Result;
 use anyhow::bail;
@@ -10,23 +9,20 @@ use crossterm::queue;
 
 use super::ImageProtocol;
 use super::ImageSource;
+use super::MediaImageState;
 use super::MediaNode;
 use super::MediaPlacementUpdate;
 use super::image::iterm2_transmit_png_bytes;
 use super::image::kitty_transmit_png_bytes_with_id;
 use super::kitty_delete_image;
 use super::kitty_transmit_png_file_with_id;
-use super::local_loader::LocalImageLimits;
-use super::local_loader::LocalImageLoader;
 use super::resolve_image_source;
 use ratatui::layout::Rect;
-
-static LOCAL_IMAGE_LOADER: LazyLock<LocalImageLoader> =
-    LazyLock::new(|| LocalImageLoader::new(LocalImageLimits::default()));
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct MediaWriteReport {
     pub(crate) placed: usize,
+    pub(crate) pending: usize,
     pub(crate) skipped: usize,
 }
 
@@ -46,6 +42,7 @@ pub(crate) struct PreparedMediaUpdate {
 pub(crate) fn prepare_media_placement_update(
     protocol: ImageProtocol,
     update: &MediaPlacementUpdate,
+    mut image_state: impl FnMut(&super::placement::RegisteredMediaPlacement) -> MediaImageState,
 ) -> Result<PreparedMediaUpdate> {
     if matches!(protocol, ImageProtocol::Sixel) {
         bail!("terminal placement writer does not support Sixel");
@@ -74,10 +71,13 @@ pub(crate) fn prepare_media_placement_update(
             prepared.report.skipped += 1;
             continue;
         };
-        let loaded = match LOCAL_IMAGE_LOADER.load_png_blocking(&path) {
-            Ok(loaded) => loaded,
-            Err(error) => {
-                tracing::debug!(path = %path.display(), %error, "skipped local chat image");
+        let loaded = match image_state(placement) {
+            MediaImageState::Ready(loaded) => loaded,
+            MediaImageState::Pending => {
+                prepared.report.pending += 1;
+                continue;
+            }
+            MediaImageState::Unavailable => {
                 prepared.report.skipped += 1;
                 continue;
             }
@@ -114,8 +114,17 @@ pub(crate) fn write_media_placement_update(
     writer: &mut impl Write,
     protocol: ImageProtocol,
     update: &MediaPlacementUpdate,
+    image_state: impl FnMut(&super::placement::RegisteredMediaPlacement) -> MediaImageState,
 ) -> Result<MediaWriteReport> {
-    let prepared = prepare_media_placement_update(protocol, update)?;
+    let prepared = prepare_media_placement_update(protocol, update, image_state)?;
+    write_prepared_media_update(writer, &prepared)?;
+    Ok(prepared.report)
+}
+
+pub(crate) fn write_prepared_media_update(
+    writer: &mut impl Write,
+    prepared: &PreparedMediaUpdate,
+) -> Result<()> {
     for command in &prepared.deletions {
         writer.write_all(command.as_bytes())?;
     }
@@ -129,5 +138,5 @@ pub(crate) fn write_media_placement_update(
         queue!(writer, RestorePosition)?;
     }
     writer.flush()?;
-    Ok(prepared.report)
+    Ok(())
 }

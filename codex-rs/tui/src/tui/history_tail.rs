@@ -32,6 +32,7 @@ impl Tui {
             &mut self.terminal,
             &mut self.pending_history_lines,
             &mut self.media_placements,
+            &mut self.media_loads,
             self.chat_media_protocol,
             self.scrollback,
             screen_size,

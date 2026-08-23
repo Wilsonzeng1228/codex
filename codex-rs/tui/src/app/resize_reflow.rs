@@ -427,6 +427,21 @@ impl App {
         tui: &mut tui::Tui,
         size: ratatui::layout::Size,
     ) -> Result<()> {
+        let media_completion = tui.poll_chat_media_loads();
+        if media_completion.history_ready {
+            // History images must be emitted while their reserved rows are reinserted into
+            // scrollback. Reuse the existing bounded source-backed reflow only when a history
+            // load completes; active-only completion needs just the frame already requested by
+            // the loader.
+            self.schedule_immediate_resize_reflow(tui);
+        }
+        if media_completion.active_ready || media_completion.history_ready {
+            tracing::debug!(
+                active_ready = media_completion.active_ready,
+                history_ready = media_completion.history_ready,
+                "local chat media became ready"
+            );
+        }
         let should_rebuild_transcript = self.handle_draw_size_change(
             size,
             tui.terminal.last_known_screen_size,

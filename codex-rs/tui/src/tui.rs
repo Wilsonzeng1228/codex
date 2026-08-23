@@ -587,6 +587,7 @@ pub struct Tui {
     chat_media_placeholder_rows: Option<crate::media::MediaPlaceholderRows>,
     chat_media_protocol: Option<crate::media::ImageProtocol>,
     media_placements: crate::media::MediaPlacementRegistry,
+    media_loads: crate::media::MediaLoadCoordinator,
     screen_size: ScreenSizePolicy,
     ambient_pet_image_state: crate::pets::PetImageRenderState,
     pet_picker_preview_image_state: crate::pets::PetImageRenderState,
@@ -646,6 +647,7 @@ impl Tui {
         let _ = crate::terminal_palette::default_colors();
         let scrollback = ScrollbackStrategy::detect(&codex_terminal_detection::terminal_info());
         let chat_media_capability = crate::media::chat_media_capability_override_from_env();
+        let media_loads = crate::media::MediaLoadCoordinator::new(frame_requester.clone());
 
         Self {
             frame_requester,
@@ -657,6 +659,7 @@ impl Tui {
                 .map(|capability| capability.placeholder_rows),
             chat_media_protocol: chat_media_capability.map(|capability| capability.protocol),
             media_placements: crate::media::MediaPlacementRegistry::default(),
+            media_loads,
             screen_size: ScreenSizePolicy::default(),
             ambient_pet_image_state: crate::pets::PetImageRenderState::default(),
             pet_picker_preview_image_state: crate::pets::PetImageRenderState::default(),
@@ -948,7 +951,7 @@ impl Tui {
             let update = self
                 .media_placements
                 .replace_history_scope(&rebuilt_media_cells, Vec::new());
-            self.write_chat_media_update(&update);
+            self.write_chat_media_update(&update, crate::media::MediaPlacementDomain::History);
             return;
         }
         self.pending_history_lines.push(PendingHistoryLines {
@@ -1003,7 +1006,7 @@ impl Tui {
         placements: Vec<crate::media::AnchoredMediaPlacementRequest>,
     ) -> crate::media::MediaPlacementUpdate {
         let update = self.media_placements.replace_active(placements);
-        self.write_chat_media_update(&update);
+        self.write_chat_media_update(&update, crate::media::MediaPlacementDomain::Active);
         update
     }
 
@@ -1012,25 +1015,40 @@ impl Tui {
         placements: Vec<crate::media::AnchoredMediaPlacementRequest>,
     ) -> crate::media::MediaPlacementUpdate {
         let update = self.media_placements.replace_history(placements);
-        self.write_chat_media_update(&update);
+        self.write_chat_media_update(&update, crate::media::MediaPlacementDomain::History);
         update
     }
 
-    fn write_chat_media_update(&mut self, update: &crate::media::MediaPlacementUpdate) {
+    pub(crate) fn poll_chat_media_loads(&mut self) -> crate::media::MediaLoadCompletion {
+        self.media_loads.poll_completed()
+    }
+
+    fn write_chat_media_update(
+        &mut self,
+        update: &crate::media::MediaPlacementUpdate,
+        domain: crate::media::MediaPlacementDomain,
+    ) {
+        self.media_loads.reconcile(update, domain);
         let Some(protocol) = self.chat_media_protocol else {
             return;
         };
-        match crate::media::write_media_placement_update(
-            self.terminal.backend_mut(),
-            protocol,
-            update,
-        ) {
+        let result = {
+            let media_loads = &self.media_loads;
+            crate::media::write_media_placement_update(
+                self.terminal.backend_mut(),
+                protocol,
+                update,
+                |placement| media_loads.image_state(placement),
+            )
+        };
+        match result {
             Ok(report) if !update.placed.is_empty() || !update.retired.is_empty() => {
                 tracing::debug!(
                     ?protocol,
                     requested = update.placed.len(),
                     retired = update.retired.len(),
                     placed = report.placed,
+                    pending = report.pending,
                     skipped = report.skipped,
                     "updated chat media placements"
                 );
@@ -1089,6 +1107,7 @@ impl Tui {
         terminal: &mut Terminal,
         pending_history_lines: &mut Vec<PendingHistoryLines>,
         media_placements: &mut crate::media::MediaPlacementRegistry,
+        media_loads: &mut crate::media::MediaLoadCoordinator,
         chat_media_protocol: Option<crate::media::ImageProtocol>,
         scrollback: ScrollbackStrategy,
         screen_size: Size,
@@ -1107,8 +1126,11 @@ impl Tui {
                     media_placements.replace_history_scope(scope, batch.placements.clone())
                 }
             };
+            media_loads.reconcile(&update, crate::media::MediaPlacementDomain::History);
             let prepared = chat_media_protocol.and_then(|protocol| {
-                match crate::media::prepare_media_placement_update(protocol, &update) {
+                match crate::media::prepare_media_placement_update(protocol, &update, |placement| {
+                    media_loads.image_state(placement)
+                }) {
                     Ok(prepared) => Some(prepared),
                     Err(error) => {
                         tracing::warn!(%error, "failed to prepare history media placements");
@@ -1122,6 +1144,7 @@ impl Tui {
                     requested = update.placed.len(),
                     retired = update.retired.len(),
                     prepared = prepared.as_ref().map_or(0, |update| update.report.placed),
+                    pending = prepared.as_ref().map_or(0, |update| update.report.pending),
                     skipped = prepared.as_ref().map_or(0, |update| update.report.skipped),
                     "prepared history media placements"
                 );
@@ -1202,6 +1225,7 @@ impl Tui {
                 terminal,
                 &mut self.pending_history_lines,
                 &mut self.media_placements,
+                &mut self.media_loads,
                 self.chat_media_protocol,
                 self.scrollback,
                 screen_size,
@@ -1324,6 +1348,7 @@ impl Tui {
                 terminal,
                 &mut self.pending_history_lines,
                 &mut self.media_placements,
+                &mut self.media_loads,
                 self.chat_media_protocol,
                 self.scrollback,
                 screen_size,

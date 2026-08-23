@@ -162,9 +162,7 @@ impl LocalImageLoader {
         }
     }
 
-    // 异步入口供下一功能单元接入事件循环；当前同步 terminal writer 先复用 blocking 内核，
-    // 让本轮可以独立落地校验和缓存，而不同时改动 draw/history 调度。
-    #[allow(dead_code)]
+    /// Load and prepare a PNG without blocking the async caller's executor thread.
     pub(crate) async fn load_png(
         &self,
         path: &Path,
@@ -186,13 +184,6 @@ impl LocalImageLoader {
                     .unwrap_or(u64::MAX),
             }),
         }
-    }
-
-    pub(crate) fn load_png_blocking(
-        &self,
-        path: &Path,
-    ) -> Result<LoadedLocalImage, LocalImageLoadError> {
-        load_png(path.to_path_buf(), self.limits, &self.cache)
     }
 }
 

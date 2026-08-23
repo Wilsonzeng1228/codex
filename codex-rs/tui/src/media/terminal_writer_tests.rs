@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Cursor;
+use std::sync::Arc;
 
 use image::DynamicImage;
 use pretty_assertions::assert_eq;
@@ -9,9 +10,11 @@ use serial_test::serial;
 use super::AnchoredMediaPlacementRequest;
 use super::ImageProtocol;
 use super::MediaCellId;
+use super::MediaImageState;
 use super::MediaNode;
 use super::MediaPlacementRegistry;
 use super::MediaPlacementRequest;
+use super::local_loader::LoadedLocalImage;
 use super::write_media_placement_update;
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
@@ -22,6 +25,16 @@ fn png_fixture() -> Vec<u8> {
         .write_to(&mut encoded, image::ImageFormat::Png)
         .expect("encode PNG fixture");
     encoded.into_inner()
+}
+
+fn loaded_fixture(bytes: Vec<u8>) -> LoadedLocalImage {
+    LoadedLocalImage {
+        bytes: Arc::from(bytes),
+        source_width: 1,
+        source_height: 1,
+        width: 1,
+        height: 1,
+    }
 }
 
 fn local_request(
@@ -71,9 +84,12 @@ fn kitty_writer_deletes_retired_ids_before_replaying_local_png_placement() {
     let placed_id = update.placed[0].id;
     let request_before_write = update.placed[0].request.clone();
     let mut output = Vec::new();
+    let loaded = loaded_fixture(png_fixture());
 
-    let report = write_media_placement_update(&mut output, ImageProtocol::Kitty, &update)
-        .expect("write placement update");
+    let report = write_media_placement_update(&mut output, ImageProtocol::Kitty, &update, |_| {
+        MediaImageState::Ready(loaded.clone())
+    })
+    .expect("write placement update");
     let output = String::from_utf8(output).expect("Kitty commands are UTF-8");
     let delete_offset = output
         .find(&format!("a=d,d=I,i={},q=2", retired_id.get()))
@@ -106,8 +122,10 @@ fn kitty_writer_skips_remote_sources_without_emitting_protocol_bytes_for_them() 
     )]);
     let mut output = Vec::new();
 
-    let report = write_media_placement_update(&mut output, ImageProtocol::Kitty, &update)
-        .expect("skip unsupported remote placement");
+    let report = write_media_placement_update(&mut output, ImageProtocol::Kitty, &update, |_| {
+        MediaImageState::Unavailable
+    })
+    .expect("skip unsupported remote placement");
 
     assert!(output.is_empty());
     assert_eq!(report.placed, 0);
@@ -131,8 +149,10 @@ fn kitty_writer_skips_local_files_without_a_png_signature() {
     )]);
     let mut output = Vec::new();
 
-    let report = write_media_placement_update(&mut output, ImageProtocol::Kitty, &update)
-        .expect("skip local non-PNG placement");
+    let report = write_media_placement_update(&mut output, ImageProtocol::Kitty, &update, |_| {
+        MediaImageState::Unavailable
+    })
+    .expect("skip local non-PNG placement");
 
     assert!(output.is_empty());
     assert_eq!(report.placed, 0);
@@ -160,8 +180,10 @@ fn kitty_writer_skips_locally_malformed_png_after_signature() {
     )]);
     let mut output = Vec::new();
 
-    let report = write_media_placement_update(&mut output, ImageProtocol::Kitty, &update)
-        .expect("skip malformed local PNG placement");
+    let report = write_media_placement_update(&mut output, ImageProtocol::Kitty, &update, |_| {
+        MediaImageState::Unavailable
+    })
+    .expect("skip malformed local PNG placement");
 
     assert!(output.is_empty());
     assert_eq!(report.placed, 0);
@@ -192,7 +214,11 @@ fn iterm2_writer_restores_cursor_without_suppressing_protocol_cursor_movement() 
     )]);
     let mut output = Vec::new();
 
-    let report = write_media_placement_update(&mut output, ImageProtocol::Iterm2Inline, &update)
+    let loaded = loaded_fixture(second_fixture.clone());
+    let report =
+        write_media_placement_update(&mut output, ImageProtocol::Iterm2Inline, &update, |_| {
+            MediaImageState::Ready(loaded.clone())
+        })
         .expect("write iTerm2 placement update");
     let output = String::from_utf8(output).expect("iTerm2 command is UTF-8");
 

@@ -106,3 +106,20 @@ async fn local_png_loader_evicts_least_recently_used_entry() {
 
     assert!(!Arc::ptr_eq(&first.bytes, &reloaded.bytes));
 }
+
+#[tokio::test]
+async fn local_png_loader_rejects_malformed_body_after_signature() {
+    let dir = tempfile::tempdir().expect("temporary image directory");
+    let path = dir.path().join("truncated.png");
+    std::fs::write(
+        &path,
+        [b"\x89PNG\r\n\x1a\n".as_slice(), b"not-a-png-body"].concat(),
+    )
+    .expect("write malformed PNG fixture");
+    let error = LocalImageLoader::new(limits())
+        .load_png(&path)
+        .await
+        .expect_err("reject malformed PNG body");
+
+    assert!(matches!(error, LocalImageLoadError::InvalidPng { .. }));
+}

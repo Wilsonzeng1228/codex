@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
 > 更新时间：2026-08-23
-> 当前状态：Phase 1 已完成，Phase 2 已开始。Windows 版 WezTerm 的静态本地 PNG 与生命周期验收保持通过；本轮新增本地 PNG 有界读取、完整解码、缩放和内存 LRU，并为后续事件循环集成提供异步 loader API。现有 draw/history writer 暂时仍调用同一 loader 的 blocking 内核，后台加载完成后调度局部重绘尚未接入；HTTPS、Sixel 和 LaTeX 未开始。
+> 当前状态：Phase 1 已完成，Phase 2 继续推进。Windows 版 WezTerm 的静态本地 PNG 与生命周期验收保持通过；本地 PNG 已具备有界读取、完整解码、缩放、内存 LRU 和 TUI 异步加载协调。生产 draw/history writer 不再执行阻塞读取或解码；后台完成会请求新帧，history 完成会复用现有 source-backed transcript reflow 把图片写入预留的 scrollback 行。HTTPS、Sixel 和 LaTeX 未开始。
 
 ## 新对话启动指令
 
@@ -27,7 +27,7 @@
 - 工作仓库：`D:\hermes\agent-repl\codex-rich`
 - 当前分支：`codex/rich-media`
 - 官方基线：`d44696065723a56b9de6538cd6348fcbe6c1542e`
-- 本轮继续开发前 HEAD：`a801d6269111ac305294d8534e7e259d750cce6f docs: 完成 Phase 1 生命周期视觉验收`
+- 本轮继续开发前 HEAD：`065691020e1fc857ba9b89b571ebeab365fbd57c feat: 增加本地图片加载与缓存边界`
 - 远程仓库只有：`upstream https://github.com/openai/codex.git`
 - 尚无 `origin`：用户还没有提供 fork 地址，不要自行猜测或推送。
 - 父目录的 `D:\hermes\agent-repl\graphify-out` 是未完成的旁路分析产物，没有可查询的 `graph.json`，不属于本仓库，不要加入提交。
@@ -125,7 +125,9 @@ ef185a27b3 feat: 为 Markdown 图片增加显式文本降级
 - 内存 LRU 同时受 32 条记录和 64 MiB 约束；缓存键包含规范化路径、文件长度和修改时间，命中时复用同一 `Arc<[u8]>`，超限时从最久未使用项开始淘汰。
 - iTerm2 inline 和 Kitty direct-data writer 改为发送 loader 准备后的 PNG 字节；Kitty local-file 仍保留路径引用语义，但发送前同样完成完整 PNG 解码与资源校验。
 - 只有 PNG magic、正文已损坏的文件不再被发送到终端，而是计为 skipped 并保留文本降级。
-- 为避免在同一提交同时重写同步 draw/history 调度，生产 writer 当前调用 loader 的 blocking 内核；真正的后台加载、完成通知、帧调度和取消仍是下一功能单元。
+- 新增 `MediaLoadCoordinator` 作为 TUI 所有的加载生命周期协调器：默认最多并发 2 个本地加载，同一规范化路径只保留一个 in-flight task，active/history anchor 共享结果。
+- production writer 现在只消费 `Ready`、`Pending` 或 `Unavailable` 的已准备状态，不再读取文件或解码。加载完成通过 `FrameRequester` 请求新帧；history 完成会触发现有的 source-backed bounded transcript reflow，active-only 完成只需下一帧重绘。
+- task retirement 会移除 anchor waiter；最后一个 waiter 消失时中止 wrapper task，generation 检查会忽略已经排队的过期完成结果。由于 `spawn_blocking` 已开始的系统工作不能保证硬取消，这里只承诺过期结果不会重新进入 placement 生命周期。
 
 ## 4. 当前架构判断
 
@@ -268,6 +270,15 @@ just test -p codex-tui finalized_markdown_media_layout_reserves_rows_at_each_ima
 - `just fix -p codex-tui` 退出码 0，仅保留未修改 `pets/mod.rs` 的两条既有 `expect_used` warning。
 - `just fmt` 仍因 Windows 缺少 `tools/buildifier` 在 Bazel/Starlark 阶段报 `[WinError 2]`；随后 `cargo fmt --all -- --check` 退出码 0。
 
+2026-08-23 Phase 2 本地 PNG 异步 TUI 集成单元：
+
+- coordinator RED 先因声明了 `media::load_coordinator` 但文件不存在而得到 `E0583`；最小实现后 `just test -p codex-tui media::load_coordinator_tests` 4/4 GREEN。
+- coordinator 测试覆盖同路径 in-flight 去重、最大并发 2、history 完成请求 frame 并发出 reflow 信号、retirement 后忽略已排队完成结果。
+- `just test -p codex-tui media::local_loader_tests` 4/4、`media::terminal_writer_tests` 5/5、`app::resize_reflow::tests` 11/11 通过；loader 额外覆盖 PNG signature 正确但正文损坏的拒绝路径。
+- 完整 `just test -p codex-tui` 共运行 3766 项，3764 项通过、2 项失败、10 项跳过。失败仍是既有项目权限历史测试（得到 `../trusted`）和 pets Kitty local-file 测试（输出包含 `cG5n`），没有新增失败。
+- `just fix -p codex-tui` 退出码 0，仅保留未修改 `pets/mod.rs` 的两条既有 `expect_used` warning。
+- `just fmt` 仍因 Windows 缺少 `tools/buildifier` 在 Bazel/Starlark 阶段报 `[WinError 2]`；随后 `cargo fmt --all -- --check` 退出码 0。
+
 ## 7. Windows 构建环境
 
 全局代理指向失效的 `127.0.0.1:7892`。所有需要 Cargo/just 网络访问的命令应只在当前 PowerShell 会话设置以下覆盖，不要修改用户的全局 Git 或代理配置：
@@ -316,21 +327,22 @@ $env:CARGO_INCREMENTAL='0'
 
 Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、resize/reflow、真实 `/resume` 任务切换、空闲 `/clear` retirement、退出 retirement 和无 override 文本降级均通过。Phase 1 生命周期验收提交本身没有混入网络下载、缓存、Sixel 或 LaTeX；后续 Phase 2 功能单元继续独立执行 TDD 和资源预算检查。
 
-### 8.3 已进入异步 I/O：先完成本地 PNG loader 基础
+### 8.3 已完成本地 PNG loader 与异步 TUI 集成
 
 本轮已经完成：
 
-- 本地 PNG 异步 API、blocking 复用内核和完整解码；
+- 本地 PNG 异步 API、blocking 隔离内核和完整解码；
 - 源字节、准备后字节、单边尺寸、总像素和等待时限上限；
 - 等比例缩放到最大输出单边；
 - 受条目数和总字节数双重约束的内存 LRU；
-- writer 对损坏/超限文件保持文本降级，不发送终端协议字节。
+- writer 对损坏/超限文件保持文本降级，不发送终端协议字节；
+- TUI 所有的有界加载协调器、同路径 in-flight 去重、active/history 完成通知与 frame requester 接线；
+- retirement/drop 的 waiter 清理、wrapper task 中止和过期 generation 忽略；
+- production writer 只消费准备状态，首次文件读取/解码不再阻塞 draw/history writer。
 
 下一功能单元按以下顺序继续：
 
-- 把 loader 的异步结果接入 TUI 事件循环和 frame requester，移除首次读取/解码对同步 writer 的阻塞；
-- 为任务切换、消息 retirement 和 TUI drop 增加加载任务取消/忽略过期结果；
-- 再扩展 JPEG、WebP 和 GIF 静态首帧，并让缓存键纳入实际渲染参数；
+- 扩展 JPEG、WebP 和 GIF 静态首帧，并让缓存键纳入实际渲染参数；
 - 最后才实现公网 HTTPS 下载器；
 - DNS 解析后再次拒绝私网/环回/链路本地地址；
 - 每次重定向都复检目标，并设置重定向次数、超时与最大响应体。
@@ -340,12 +352,11 @@ Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、re
 ## 9. 尚未完成
 
 - active streaming 瞬间没有单独截图，当前可靠证据集中在 finalized history、滚动、resize/reflow、退出 retirement 与文本降级；
-- 本地 PNG loader 已具备异步 API、解码、缩放和有界内存 LRU，但生产 writer 首次读取/解码仍走 blocking 内核，尚未接入后台完成通知与局部重绘；
 - loader 暂只接受 PNG；JPEG、WebP、GIF 静态首帧和按实际终端渲染参数生成缓存键尚未实现；
 - 缓存尚无用户清理命令或磁盘层；
 - 尚无远程 HTTPS 下载器和 DNS 级 SSRF 防护；
 - Sixel 编码仍留在 pets 专用实现，尚未完全移入通用媒体层；
-- 媒体节点尚未记录源字节范围；生命周期更新已能发送/删除 Kitty placement，但本地文件仍在同步路径读取，尚无解码、缩放、缓存和资源上限；
+- 媒体节点尚未记录源字节范围；
 - LaTeX 渲染尚未开始；
 - 富媒体交互、配置开关、文档、最终打包尚未开始。
 
@@ -355,7 +366,7 @@ Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、re
 |---|---|
 | Phase 0：基线与架构勘察 | 已完成 |
 | Phase 1：图片语法、协议、节点与布局 | 已完成 |
-| Phase 2：本地/远程图片 I/O 与缓存 | 进行中（本地 PNG loader、资源上限和内存 LRU 已完成；异步 UI 集成与远程下载待做） |
+| Phase 2：本地/远程图片 I/O 与缓存 | 进行中（本地 PNG loader、资源上限、内存 LRU 和异步 UI 集成已完成；其他静态格式与远程下载待做） |
 | Phase 3：LaTeX | 待开始 |
 | Phase 4：交互与配置 | 待开始 |
 | Phase 5：文档、技能与验收 | 待开始 |
@@ -377,7 +388,7 @@ Windows 下 `git status --short` 当前会显示：
 - TUI 测试优先 `just test -p codex-tui <filter>`；
 - 新行为必须先写失败测试，确认 RED 后做最小实现并确认 GREEN；
 - 本轮所有文件完成后统一提交，禁止 `git add .`；
-- 本轮建议提交信息：`feat: 增加本地图片加载与缓存边界`。
+- 本轮建议提交信息：`feat: 异步加载聊天本地图片`。
 
 ## 11. 新对话的起手命令
 
@@ -401,7 +412,7 @@ Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\app\resize_reflow.rs
 Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\tui.rs
 ```
 
-不要重做已经通过的 Windows WezTerm 核心 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、真实 `/resume` 任务切换或空闲 `/clear` retirement。下一轮若进入 Phase 2，先重新确认范围、磁盘红线和异步 I/O 安全边界。
+不要重做已经通过的 Windows WezTerm 核心 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、真实 `/resume` 任务切换、空闲 `/clear` retirement 或本地 PNG 异步 TUI 集成。下一轮继续 Phase 2 时，先重新确认范围、磁盘红线和静态格式解码边界。
 
 ## 12. Phase 1 完成判据
 

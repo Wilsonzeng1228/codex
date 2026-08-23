@@ -1,5 +1,6 @@
 mod image;
 mod layout;
+mod load_coordinator;
 mod local_loader;
 mod node;
 mod placement;
@@ -9,6 +10,8 @@ mod terminal_writer;
 
 #[cfg(test)]
 mod image_tests;
+#[cfg(test)]
+mod load_coordinator_tests;
 #[cfg(test)]
 mod local_loader_tests;
 #[cfg(test)]
@@ -30,6 +33,10 @@ pub(crate) use image::kitty_transmit_png_with_id;
 pub(crate) use layout::MediaLayout;
 pub(crate) use layout::MediaPlaceholderRows;
 pub(crate) use layout::MediaPlacementRequest;
+pub(crate) use load_coordinator::MediaImageState;
+pub(crate) use load_coordinator::MediaLoadCompletion;
+pub(crate) use load_coordinator::MediaLoadCoordinator;
+pub(crate) use load_coordinator::MediaPlacementDomain;
 pub(crate) use node::MediaNode;
 pub(crate) use node::extract_media_nodes;
 pub(crate) use placement::AnchoredMediaPlacementRequest;
