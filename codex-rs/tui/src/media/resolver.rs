@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::path::PathBuf;
@@ -87,8 +88,8 @@ fn resolve_https_url(url: Url) -> Result<ImageSource, ImageSourceError> {
                 || domain.to_ascii_lowercase().ends_with(".localhost")
                 || domain.to_ascii_lowercase().ends_with(".local")
         }
-        Some(Host::Ipv4(address)) => is_unsafe_ipv4(address),
-        Some(Host::Ipv6(address)) => is_unsafe_ipv6(address),
+        Some(Host::Ipv4(address)) => is_non_public_ip(IpAddr::V4(address)),
+        Some(Host::Ipv6(address)) => is_non_public_ip(IpAddr::V6(address)),
         None => true,
     };
     if unsafe_host {
@@ -98,20 +99,40 @@ fn resolve_https_url(url: Url) -> Result<ImageSource, ImageSourceError> {
     Ok(ImageSource::Https(url))
 }
 
-fn is_unsafe_ipv4(address: Ipv4Addr) -> bool {
-    let octets = address.octets();
+pub(super) fn is_non_public_ip(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => is_non_public_ipv4(address),
+        IpAddr::V6(address) => is_non_public_ipv6(address),
+    }
+}
+
+fn is_non_public_ipv4(address: Ipv4Addr) -> bool {
     address.is_private()
         || address.is_loopback()
         || address.is_link_local()
         || address.is_unspecified()
         || address.is_multicast()
-        || octets[0] == 0
-        || octets == [255, 255, 255, 255]
+        || address.is_broadcast()
+        || ipv4_in_cidr(address, [0, 0, 0, 0], /*prefix*/ 8)
+        || ipv4_in_cidr(address, [100, 64, 0, 0], /*prefix*/ 10)
+        || ipv4_in_cidr(address, [192, 0, 0, 0], /*prefix*/ 24)
+        || ipv4_in_cidr(address, [192, 0, 2, 0], /*prefix*/ 24)
+        || ipv4_in_cidr(address, [198, 18, 0, 0], /*prefix*/ 15)
+        || ipv4_in_cidr(address, [198, 51, 100, 0], /*prefix*/ 24)
+        || ipv4_in_cidr(address, [203, 0, 113, 0], /*prefix*/ 24)
+        || ipv4_in_cidr(address, [240, 0, 0, 0], /*prefix*/ 4)
 }
 
-fn is_unsafe_ipv6(address: Ipv6Addr) -> bool {
-    if let Some(address) = address.to_ipv4_mapped() {
-        return is_unsafe_ipv4(address);
+fn ipv4_in_cidr(address: Ipv4Addr, base: [u8; 4], prefix: u8) -> bool {
+    let address = u32::from(address);
+    let base = u32::from(Ipv4Addr::from(base));
+    let mask = u32::MAX << (32 - prefix);
+    (address & mask) == (base & mask)
+}
+
+fn is_non_public_ipv6(address: Ipv6Addr) -> bool {
+    if let Some(address) = address.to_ipv4() {
+        return is_non_public_ipv4(address);
     }
 
     let segments = address.segments();
@@ -120,6 +141,8 @@ fn is_unsafe_ipv6(address: Ipv6Addr) -> bool {
         || address.is_multicast()
         || segments[0] & 0xfe00 == 0xfc00
         || segments[0] & 0xffc0 == 0xfe80
+        || segments[0] & 0xffc0 == 0xfec0
+        || (segments[0] == 0x2001 && segments[1] == 0x0db8)
 }
 
 fn is_windows_absolute_path(path: &str) -> bool {

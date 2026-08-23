@@ -119,8 +119,11 @@ pub(crate) enum LocalImageLoadError {
         height: u32,
         max_pixels: u64,
     },
-    #[error("failed to decode local image {path}: {message}")]
-    Decode { path: PathBuf, message: String },
+    #[error("failed to decode image {source_label}: {message}")]
+    Decode {
+        source_label: String,
+        message: String,
+    },
     #[error("failed to encode prepared local PNG: {message}")]
     Encode { message: String },
     #[error("prepared local PNG is too large ({size} bytes; max {max} bytes)")]
@@ -129,6 +132,14 @@ pub(crate) enum LocalImageLoadError {
     Timeout { milliseconds: u64 },
     #[error("local image worker failed: {message}")]
     Worker { message: String },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SourceFileReuse {
+    Available,
+    // The remote policy foundation is not connected to a production HTTP adapter yet.
+    #[allow(dead_code)]
+    Unavailable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -283,6 +294,31 @@ fn load_image(
         });
     }
 
+    let image = prepare_image_bytes(
+        bytes,
+        limits,
+        render_params,
+        canonical_path.display().to_string(),
+        SourceFileReuse::Available,
+    )?;
+    cache_lock(cache).insert(key, image.clone(), limits);
+    Ok(image)
+}
+
+pub(super) fn prepare_image_bytes(
+    bytes: Vec<u8>,
+    limits: LocalImageLimits,
+    render_params: LocalImageRenderParams,
+    source: String,
+    source_file_reuse: SourceFileReuse,
+) -> Result<LoadedLocalImage, LocalImageLoadError> {
+    if bytes.len() > limits.max_source_bytes {
+        return Err(LocalImageLoadError::SourceTooLarge {
+            size: bytes.len(),
+            max: limits.max_source_bytes,
+        });
+    }
+    let render_params = render_params.constrained_by(limits.max_output_dimension);
     let format =
         image::guess_format(&bytes).map_err(|error| LocalImageLoadError::InvalidImage {
             message: error.to_string(),
@@ -327,7 +363,7 @@ fn load_image(
 
     let decoded =
         DynamicImage::from_decoder(decoder).map_err(|error| LocalImageLoadError::Decode {
-            path: canonical_path.clone(),
+            source_label: source,
             message: error.to_string(),
         })?;
     let needs_resize =
@@ -365,9 +401,10 @@ fn load_image(
         source_height,
         width,
         height,
-        can_use_source_file: format == ImageFormat::Png && !needs_resize,
+        can_use_source_file: source_file_reuse == SourceFileReuse::Available
+            && format == ImageFormat::Png
+            && !needs_resize,
     };
-    cache_lock(cache).insert(key, image.clone(), limits);
     Ok(image)
 }
 
