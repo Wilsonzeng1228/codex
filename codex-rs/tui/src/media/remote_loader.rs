@@ -6,6 +6,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use codex_http_client::HttpClientBuilder;
+use serde::Deserialize;
 use thiserror::Error;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
@@ -20,6 +21,8 @@ const DEFAULT_DNS_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_TOTAL_TIMEOUT: Duration = Duration::from_secs(15);
+const DNS_OVER_HTTPS_ENDPOINT: &str = "https://dns.google/resolve";
+const MAX_DNS_OVER_HTTPS_RESPONSE_BYTES: usize = 64 * 1024;
 
 /// Resolves one remote-image host so policy can validate every address before a request is sent.
 pub(crate) trait RemoteImageDnsResolver: Clone + Send + Sync + 'static {
@@ -57,6 +60,172 @@ impl RemoteImageDnsResolver for SystemRemoteImageDnsResolver {
         })
         .await
         .map_err(|error| format!("system DNS worker failed: {error}"))?
+    }
+}
+
+/// Uses a secondary resolver only when the primary returns a known transparent-proxy Fake-IP.
+///
+/// Normal public system answers stay on the primary path. Other private or special-use answers are
+/// deliberately preserved so the remote-image policy rejects them rather than bypassing them.
+#[derive(Clone, Debug)]
+pub(crate) struct FakeIpFallbackRemoteImageDnsResolver<P, F> {
+    primary: P,
+    fallback: F,
+}
+
+impl<P, F> FakeIpFallbackRemoteImageDnsResolver<P, F> {
+    pub(crate) const fn new(primary: P, fallback: F) -> Self {
+        Self { primary, fallback }
+    }
+}
+
+impl<P, F> RemoteImageDnsResolver for FakeIpFallbackRemoteImageDnsResolver<P, F>
+where
+    P: RemoteImageDnsResolver,
+    F: RemoteImageDnsResolver,
+{
+    async fn resolve(&self, host: String, port: u16) -> Result<Vec<IpAddr>, String> {
+        let addresses = self.primary.resolve(host.clone(), port).await?;
+        if !addresses.is_empty() && addresses.iter().copied().all(is_known_proxy_fake_ip) {
+            tracing::debug!(%host, "system DNS returned proxy Fake-IP; using DNS-over-HTTPS fallback");
+            self.fallback.resolve(host, port).await
+        } else {
+            Ok(addresses)
+        }
+    }
+}
+
+/// Resolves through a fixed HTTPS DNS endpoint when a transparent proxy hides real addresses.
+///
+/// The endpoint itself uses ordinary TLS hostname verification. Returned addresses still pass
+/// through the same public-address policy and are pinned by the image HTTP adapter.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct DnsOverHttpsRemoteImageDnsResolver;
+
+impl DnsOverHttpsRemoteImageDnsResolver {
+    pub(crate) const fn new() -> Self {
+        Self
+    }
+}
+
+impl RemoteImageDnsResolver for DnsOverHttpsRemoteImageDnsResolver {
+    async fn resolve(&self, host: String, _port: u16) -> Result<Vec<IpAddr>, String> {
+        let client = HttpClientBuilder::new()
+            .without_redirects()
+            .without_request_logging()
+            .connect_timeout(DEFAULT_DNS_TIMEOUT)
+            .build_direct()
+            .map_err(|error| format!("build DNS-over-HTTPS client: {error}"))?;
+        let (ipv4, ipv6) = tokio::try_join!(
+            resolve_dns_over_https_record(&client, &host, /*record_type*/ 1),
+            resolve_dns_over_https_record(&client, &host, /*record_type*/ 28),
+        )?;
+        let mut addresses = ipv4;
+        for address in ipv6 {
+            if !addresses.contains(&address) {
+                addresses.push(address);
+            }
+        }
+        Ok(addresses)
+    }
+}
+
+pub(crate) type ProductionRemoteImageDnsResolver = FakeIpFallbackRemoteImageDnsResolver<
+    SystemRemoteImageDnsResolver,
+    DnsOverHttpsRemoteImageDnsResolver,
+>;
+
+#[derive(Deserialize)]
+struct DnsOverHttpsResponse {
+    #[serde(rename = "Status")]
+    status: u16,
+    #[serde(rename = "Answer", default)]
+    answers: Vec<DnsOverHttpsAnswer>,
+}
+
+#[derive(Deserialize)]
+struct DnsOverHttpsAnswer {
+    #[serde(rename = "type")]
+    record_type: u16,
+    data: String,
+}
+
+async fn resolve_dns_over_https_record(
+    client: &codex_http_client::HttpClient,
+    host: &str,
+    record_type: u16,
+) -> Result<Vec<IpAddr>, String> {
+    let mut url = Url::parse(DNS_OVER_HTTPS_ENDPOINT)
+        .map_err(|error| format!("invalid DNS-over-HTTPS endpoint: {error}"))?;
+    let record_type_name = match record_type {
+        1 => "A",
+        28 => "AAAA",
+        _ => return Err(format!("unsupported DNS record type {record_type}")),
+    };
+    url.query_pairs_mut()
+        .append_pair("name", host)
+        .append_pair("type", record_type_name);
+    let response = client
+        .get(url)
+        .header("accept", "application/dns-json")
+        .timeout(DEFAULT_DNS_TIMEOUT)
+        .send()
+        .await
+        .map_err(|error| format!("DNS-over-HTTPS request failed: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("DNS-over-HTTPS returned HTTP status {status}"));
+    }
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_DNS_OVER_HTTPS_RESPONSE_BYTES as u64)
+    {
+        return Err("DNS-over-HTTPS response exceeded 65536 bytes".to_string());
+    }
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| format!("read DNS-over-HTTPS response: {error}"))?;
+        if body.len().saturating_add(chunk.len()) > MAX_DNS_OVER_HTTPS_RESPONSE_BYTES {
+            return Err("DNS-over-HTTPS response exceeded 65536 bytes".to_string());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    parse_dns_over_https_answers(&body, record_type)
+}
+
+pub(crate) fn parse_dns_over_https_answers(
+    body: &[u8],
+    record_type: u16,
+) -> Result<Vec<IpAddr>, String> {
+    let response: DnsOverHttpsResponse = serde_json::from_slice(body)
+        .map_err(|error| format!("invalid DNS-over-HTTPS JSON: {error}"))?;
+    if response.status != 0 {
+        return Err(format!(
+            "DNS-over-HTTPS returned DNS status {}",
+            response.status
+        ));
+    }
+    response
+        .answers
+        .into_iter()
+        .filter(|answer| answer.record_type == record_type)
+        .map(|answer| {
+            answer
+                .data
+                .parse::<IpAddr>()
+                .map_err(|error| format!("invalid DNS-over-HTTPS address {}: {error}", answer.data))
+        })
+        .collect()
+}
+
+fn is_known_proxy_fake_ip(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            let octets = address.octets();
+            octets[0] == 198 && matches!(octets[1], 18 | 19)
+        }
+        IpAddr::V6(address) => address.octets()[..8] == [0xfd, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0, 0],
     }
 }
 
@@ -402,10 +571,13 @@ where
     }
 }
 
-impl RemoteImageLoader<SystemRemoteImageDnsResolver, PinnedRemoteImageHttpClient> {
+impl RemoteImageLoader<ProductionRemoteImageDnsResolver, PinnedRemoteImageHttpClient> {
     pub(crate) fn production() -> Self {
         Self::new(
-            SystemRemoteImageDnsResolver::new(),
+            FakeIpFallbackRemoteImageDnsResolver::new(
+                SystemRemoteImageDnsResolver::new(),
+                DnsOverHttpsRemoteImageDnsResolver::new(),
+            ),
             PinnedRemoteImageHttpClient::new(),
             RemoteImageLimits::default(),
         )

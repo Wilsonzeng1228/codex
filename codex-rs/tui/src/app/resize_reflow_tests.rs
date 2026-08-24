@@ -1,6 +1,7 @@
 use super::*;
 use crate::app::test_support::make_test_app;
 use crate::history_cell::AgentMarkdownCell;
+use crate::history_cell::HistoryRenderMode;
 use crate::history_cell::PlainHistoryCell;
 use crate::legacy_core::config::TerminalResizeReflowMaxRows;
 use pretty_assertions::assert_eq;
@@ -99,6 +100,70 @@ async fn tui_capability_override_reaches_committed_history_owner() -> Result<()>
                 ),
             },
         }]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn iterm2_history_image_forces_source_reflow_before_plain_follow_up() -> Result<()> {
+    let mut app = make_test_app().await;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let placeholder_rows =
+        crate::media::MediaPlaceholderRows::try_from(3).expect("non-zero placeholder height");
+    tui.set_chat_media_capability_for_test(
+        crate::media::ImageProtocol::Iterm2Inline,
+        placeholder_rows,
+    );
+    let image_cell = Arc::new(AgentMarkdownCell::new(
+        "![diagram](D:/course/diagram.png)".to_string(),
+        std::path::Path::new("/tmp"),
+    ));
+    let media_cell_id = image_cell
+        .media_cell_id()
+        .expect("source-backed media cell id");
+    let placement = image_cell
+        .display_media_layout_for_mode(
+            /*width*/ 40,
+            HistoryRenderMode::Rich,
+            Some(placeholder_rows),
+        )
+        .placements
+        .into_iter()
+        .next()
+        .expect("image placement");
+    app.transcript_cells.push(image_cell);
+    tui.replace_history_media_placements(vec![crate::media::AnchoredMediaPlacementRequest::new(
+        media_cell_id,
+        placement,
+    )]);
+    assert!(
+        !tui.iterm2_history_requires_reflow_on_append(),
+        "a pending image cannot be erased because it has not been emitted yet"
+    );
+    tui.set_history_media_ready_for_test();
+    assert!(
+        tui.iterm2_history_requires_reflow_on_append(),
+        "an emitted iTerm2 history image must be protected from an incremental append"
+    );
+
+    app.insert_history_cell(
+        &mut tui,
+        Box::new(PlainHistoryCell::new(vec![Line::from("follow-up")])),
+    );
+
+    assert!(
+        app.transcript_reflow.has_pending_reflow(),
+        "iTerm2 must rebuild source-backed history instead of scrolling an existing image"
+    );
+    assert_eq!(
+        tui.pending_history_line_batch_count(),
+        0,
+        "the destructive incremental append must not be queued before reflow"
+    );
+    tui.set_chat_media_capability_for_test(crate::media::ImageProtocol::Kitty, placeholder_rows);
+    assert!(
+        !tui.iterm2_history_requires_reflow_on_append(),
+        "Kitty placements have stable IDs and must keep their incremental path"
     );
     Ok(())
 }

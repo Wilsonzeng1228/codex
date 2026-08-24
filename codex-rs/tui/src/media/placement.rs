@@ -151,7 +151,6 @@ impl MediaPlacementRegistry {
         &self.active
     }
 
-    #[cfg(test)]
     pub(crate) fn history(&self) -> &[RegisteredMediaPlacement] {
         &self.history
     }

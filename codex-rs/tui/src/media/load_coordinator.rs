@@ -21,9 +21,9 @@ use super::local_loader::LocalImageRenderParams;
 use super::placement::MediaAnchor;
 use super::placement::RegisteredMediaPlacement;
 use super::remote_loader::PinnedRemoteImageHttpClient;
+use super::remote_loader::ProductionRemoteImageDnsResolver;
 use super::remote_loader::RemoteImageDownloadError;
 use super::remote_loader::RemoteImageLoader;
-use super::remote_loader::SystemRemoteImageDnsResolver;
 use super::resolve_image_source;
 use crate::tui::FrameRequester;
 
@@ -117,7 +117,7 @@ impl MediaLoadCoordinator {
             })
         });
         let remote_loader = RemoteImageLoader::<
-            SystemRemoteImageDnsResolver,
+            ProductionRemoteImageDnsResolver,
             PinnedRemoteImageHttpClient,
         >::production();
         let remote_loader = Arc::new(move |url: Url| -> RemoteImageLoadFuture {
@@ -239,6 +239,30 @@ impl MediaLoadCoordinator {
             }
             None => MediaImageState::Pending,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_ready_image_for_test(&mut self, placement: &RegisteredMediaPlacement) {
+        let source_key = self
+            .anchor_sources
+            .get(&placement.request.anchor)
+            .cloned()
+            .expect("test placement must be reconciled before it becomes ready");
+        let source = self
+            .sources
+            .get_mut(&source_key)
+            .expect("test source must exist before it becomes ready");
+        if let Some(task) = source.task.take() {
+            task.abort();
+        }
+        source.outcome = Some(LoadOutcome::Ready(LoadedLocalImage {
+            bytes: Arc::from(&b"prepared-png"[..]),
+            source_width: 1,
+            source_height: 1,
+            width: 1,
+            height: 1,
+            can_use_source_file: false,
+        }));
     }
 
     #[cfg(test)]

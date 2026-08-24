@@ -52,6 +52,12 @@ impl App {
         if self.initial_history_replay_buffer.as_ref().is_some() {
             self.insert_history_cell_lines_with_initial_replay_buffer(tui, cell.as_ref(), width);
             self.last_rendered_history_tail = None;
+        } else if self.overlay.is_none() && tui.iterm2_history_requires_reflow_on_append() {
+            // Windows WezTerm removes an iTerm2 inline image when a later history row is inserted
+            // through the scroll region. Replay the bounded source-backed transcript so the old
+            // image and this new cell are emitted together without that destructive append.
+            self.schedule_immediate_resize_reflow(tui);
+            self.last_rendered_history_tail = None;
         } else {
             self.insert_history_cell_lines(tui, cell.as_ref(), width);
             self.last_rendered_history_tail = if self.overlay.is_none() && !lines.is_empty() {

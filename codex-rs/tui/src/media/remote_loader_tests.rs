@@ -193,6 +193,86 @@ async fn system_dns_resolver_returns_only_localhost_addresses_for_localhost() {
 }
 
 #[tokio::test]
+async fn fake_ip_dns_uses_fallback_without_bypassing_other_private_answers() {
+    let fake_ipv4 = "198.18.0.50".parse().unwrap();
+    let fake_ipv6 = "fdfe:dcba:9876::30".parse().unwrap();
+    let primary = FakeDns::new([Ok(vec![fake_ipv4, fake_ipv6])]);
+    let fallback = FakeDns::new([Ok(vec![public_ip()])]);
+    let resolver =
+        remote::FakeIpFallbackRemoteImageDnsResolver::new(primary.clone(), fallback.clone());
+
+    let addresses = remote::RemoteImageDnsResolver::resolve(
+        &resolver,
+        "images.example".to_string(),
+        /*port*/ 443,
+    )
+    .await
+    .expect("replace known Fake-IP answers with fallback DNS answers");
+
+    assert_eq!(addresses, vec![public_ip()]);
+    assert_eq!(primary.lookups.lock().unwrap().len(), 1);
+    assert_eq!(fallback.lookups.lock().unwrap().len(), 1);
+
+    let private_ip = "10.0.0.8".parse().unwrap();
+    let primary = FakeDns::new([Ok(vec![private_ip])]);
+    let fallback = FakeDns::new([Ok(vec![public_ip()])]);
+    let resolver =
+        remote::FakeIpFallbackRemoteImageDnsResolver::new(primary.clone(), fallback.clone());
+
+    let addresses = remote::RemoteImageDnsResolver::resolve(
+        &resolver,
+        "internal.example".to_string(),
+        /*port*/ 443,
+    )
+    .await
+    .expect("preserve non-Fake-IP private answers for the policy layer to reject");
+
+    assert_eq!(addresses, vec![private_ip]);
+    assert_eq!(primary.lookups.lock().unwrap().len(), 1);
+    assert!(fallback.lookups.lock().unwrap().is_empty());
+
+    let primary = FakeDns::new([Ok(vec![public_ip()])]);
+    let fallback = FakeDns::new([Ok(vec!["1.1.1.1".parse().unwrap()])]);
+    let resolver =
+        remote::FakeIpFallbackRemoteImageDnsResolver::new(primary.clone(), fallback.clone());
+
+    let addresses = remote::RemoteImageDnsResolver::resolve(
+        &resolver,
+        "public.example".to_string(),
+        /*port*/ 443,
+    )
+    .await
+    .expect("use normal public system DNS answers without a fallback lookup");
+
+    assert_eq!(addresses, vec![public_ip()]);
+    assert_eq!(primary.lookups.lock().unwrap().len(), 1);
+    assert!(fallback.lookups.lock().unwrap().is_empty());
+}
+
+#[test]
+fn dns_over_https_json_keeps_only_requested_address_records() {
+    let response = br#"{
+        "Status": 0,
+        "Answer": [
+            {"name":"images.example.","type":5,"TTL":60,"data":"cdn.example."},
+            {"name":"cdn.example.","type":1,"TTL":60,"data":"8.8.8.8"},
+            {"name":"cdn.example.","type":28,"TTL":60,"data":"2001:4860:4860::8888"}
+        ]
+    }"#;
+
+    assert_eq!(
+        remote::parse_dns_over_https_answers(response, /*record_type*/ 1).unwrap(),
+        vec!["8.8.8.8".parse::<IpAddr>().unwrap()]
+    );
+    assert_eq!(
+        remote::parse_dns_over_https_answers(response, /*record_type*/ 28).unwrap(),
+        vec!["2001:4860:4860::8888".parse::<IpAddr>().unwrap()]
+    );
+    assert!(remote::parse_dns_over_https_answers(br#"{"Status":2}"#, 1).is_err());
+    assert!(remote::parse_dns_over_https_answers(b"not json", 1).is_err());
+}
+
+#[tokio::test]
 async fn remote_loader_allows_only_https_with_public_dns_answers() {
     let dns = FakeDns::new([]);
     let http = FakeHttp::new([]);

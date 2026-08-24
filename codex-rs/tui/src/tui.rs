@@ -971,6 +971,21 @@ impl Tui {
         self.chat_media_placeholder_rows
     }
 
+    /// iTerm2 inline images have no stable placement ID and Windows WezTerm drops them when a
+    /// later history row scrolls through the inline scroll region. Rebuild the bounded,
+    /// source-backed transcript instead of incrementally appending once history owns an image.
+    pub(crate) fn iterm2_history_requires_reflow_on_append(&self) -> bool {
+        matches!(
+            self.chat_media_protocol,
+            Some(crate::media::ImageProtocol::Iterm2Inline)
+        ) && self.media_placements.history().iter().any(|placement| {
+            matches!(
+                self.media_loads.image_state(placement),
+                crate::media::MediaImageState::Ready(_)
+            )
+        })
+    }
+
     pub(crate) fn log_chat_media_capability(&self) {
         tracing::info!(
             protocol_override = ?std::env::var("CODEX_TUI_MEDIA_CAPABILITY_OVERRIDE").ok(),
@@ -992,6 +1007,16 @@ impl Tui {
     }
 
     #[cfg(test)]
+    pub(crate) fn set_chat_media_capability_for_test(
+        &mut self,
+        protocol: crate::media::ImageProtocol,
+        image_placeholder_rows: crate::media::MediaPlaceholderRows,
+    ) {
+        self.chat_media_placeholder_rows = Some(image_placeholder_rows);
+        self.chat_media_protocol = Some(protocol);
+    }
+
+    #[cfg(test)]
     pub(crate) fn pending_history_media_placements(
         &self,
     ) -> Vec<crate::media::AnchoredMediaPlacementRequest> {
@@ -999,6 +1024,19 @@ impl Tui {
             .iter()
             .flat_map(|batch| batch.placements.iter().cloned())
             .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_history_line_batch_count(&self) -> usize {
+        self.pending_history_lines.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_history_media_ready_for_test(&mut self) {
+        let placements = self.media_placements.history().to_vec();
+        for placement in &placements {
+            self.media_loads.set_ready_image_for_test(placement);
+        }
     }
 
     pub(crate) fn replace_active_media_placements(
