@@ -13,6 +13,8 @@ use super::MediaImageState;
 use super::MediaNode;
 use super::MediaPlacementUpdate;
 use super::image::iterm2_transmit_png_bytes;
+use super::image::iterm2_transmit_png_bytes_fit_height;
+use super::image::iterm2_transmit_png_bytes_fit_width;
 use super::image::kitty_transmit_png_bytes_with_id;
 use super::kitty_delete_image;
 use super::kitty_transmit_png_file_with_id;
@@ -89,9 +91,17 @@ pub(crate) fn prepare_media_placement_update(
         };
         let rect = placement.request.request.rect;
         let command = match protocol {
-            ImageProtocol::Iterm2Inline => {
-                iterm2_transmit_png_bytes(&loaded.bytes, rect.width, rect.height)
-            }
+            ImageProtocol::Iterm2Inline => match &placement.request.request.node {
+                MediaNode::Image { .. } => {
+                    iterm2_transmit_png_bytes(&loaded.bytes, rect.width, rect.height)
+                }
+                MediaNode::Latex { display: true, .. } => {
+                    iterm2_transmit_png_bytes_fit_width(&loaded.bytes, rect.width)
+                }
+                MediaNode::Latex { display: false, .. } => {
+                    iterm2_transmit_png_bytes_fit_height(&loaded.bytes, rect.height)
+                }
+            },
             ImageProtocol::Kitty => kitty_transmit_png_bytes_with_id(
                 &loaded.bytes,
                 rect.width,

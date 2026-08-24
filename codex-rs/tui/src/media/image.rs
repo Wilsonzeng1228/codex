@@ -39,9 +39,25 @@ pub(crate) fn iterm2_transmit_png(path: &Path, columns: u16, rows: u16) -> Resul
 }
 
 pub(crate) fn iterm2_transmit_png_bytes(png: &[u8], columns: u16, rows: u16) -> String {
+    iterm2_transmit_png_bytes_with_dimensions(png, columns, rows)
+}
+
+pub(crate) fn iterm2_transmit_png_bytes_fit_width(png: &[u8], columns: u16) -> String {
+    iterm2_transmit_png_bytes_with_dimensions(png, columns, "auto")
+}
+
+pub(crate) fn iterm2_transmit_png_bytes_fit_height(png: &[u8], rows: u16) -> String {
+    iterm2_transmit_png_bytes_with_dimensions(png, "auto", rows)
+}
+
+fn iterm2_transmit_png_bytes_with_dimensions(
+    png: &[u8],
+    width: impl std::fmt::Display,
+    height: impl std::fmt::Display,
+) -> String {
     let size = png.len();
     let payload = general_purpose::STANDARD.encode(png);
-    format!("{ESC}]1337;File=size={size};width={columns};height={rows};inline=1:{payload}{ST}")
+    format!("{ESC}]1337;File=size={size};width={width};height={height};inline=1:{payload}{ST}")
 }
 
 pub(crate) fn kitty_transmit_png_with_id(
