@@ -224,10 +224,8 @@ fn fitted_latex_pixel_dimensions(
     let max_width = u32::from(rect.width.max(1)) * u32::from(cell_pixels.width);
     let max_height = u32::from(rect.height.max(1)) * u32::from(cell_pixels.height);
 
-    if source_width <= max_width && source_height <= max_height {
-        return (source_width, source_height);
-    }
-
+    // Fill the reserved formula area even when RaTeX produced a smaller bitmap; keeping the
+    // intrinsic size makes otherwise valid formulas unreadably small on high-DPI terminals.
     if u64::from(source_width) * u64::from(max_height)
         >= u64::from(source_height) * u64::from(max_width)
     {

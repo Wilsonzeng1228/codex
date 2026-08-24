@@ -204,7 +204,7 @@ fn iterm2_writer_transmits_ready_latex_png_bytes() {
     )]);
     let fixture = png_fixture();
     let loaded =
-        loaded_fixture_with_dimensions(fixture.clone(), /*width*/ 600, /*height*/ 120);
+        loaded_fixture_with_dimensions(fixture.clone(), /*width*/ 120, /*height*/ 24);
     let mut output = Vec::new();
 
     let report = write_media_placement_update_with_cell_pixels(
@@ -232,7 +232,7 @@ fn iterm2_writer_transmits_ready_latex_png_bytes() {
 
 #[test]
 #[serial]
-fn iterm2_writer_fits_inline_latex_inside_two_readable_rows() {
+fn iterm2_writer_fits_inline_latex_inside_three_readable_rows() {
     let cell_id = MediaCellId::new(33).expect("non-zero media cell id");
     let mut registry = MediaPlacementRegistry::default();
     let update = registry.replace_active(vec![latex_request(
@@ -240,7 +240,7 @@ fn iterm2_writer_fits_inline_latex_inside_two_readable_rows() {
         "H(s)=\\frac{1}{s+1}",
         /*display*/ false,
         Rect::new(
-            /*x*/ 2, /*y*/ 3, /*width*/ 30, /*height*/ 2,
+            /*x*/ 2, /*y*/ 3, /*width*/ 30, /*height*/ 3,
         ),
     )]);
     let fixture = png_fixture();
@@ -259,7 +259,7 @@ fn iterm2_writer_fits_inline_latex_inside_two_readable_rows() {
     let output = String::from_utf8(output).expect("iTerm2 command is UTF-8");
 
     assert!(output.contains(&format!(
-        "\x1b]1337;File=size={};width=200px;height=40px;preserveAspectRatio=1;inline=1:",
+        "\x1b]1337;File=size={};width=300px;height=60px;preserveAspectRatio=1;inline=1:",
         fixture.len()
     )));
     assert!(!output.contains("auto"));

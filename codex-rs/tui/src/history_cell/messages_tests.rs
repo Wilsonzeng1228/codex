@@ -126,7 +126,7 @@ fn finalized_markdown_media_layout_keeps_block_latex_fallback_under_placement() 
 }
 
 #[test]
-fn finalized_markdown_media_layout_reserves_two_rows_for_readable_inline_latex() {
+fn finalized_markdown_media_layout_reserves_three_rows_for_readable_inline_latex() {
     let source = "Gain is $x^2+y^2$";
     let cell = AgentMarkdownCell::new(source.to_string(), Path::new("/tmp"));
     let placeholder_rows =
@@ -135,9 +135,10 @@ fn finalized_markdown_media_layout_reserves_two_rows_for_readable_inline_latex()
     let layout = cell.display_media_layout(/*width*/ 64, Some(placeholder_rows));
     let visible = visible_lines(layout.lines.clone());
 
-    assert_eq!(visible.len(), 2);
+    assert_eq!(visible.len(), 3);
     assert_eq!(visible[0].to_string(), "• Gain is $x^2+y^2$");
     assert!(visible[1].to_string().trim().is_empty());
+    assert!(visible[2].to_string().trim().is_empty());
     assert_eq!(
         layout.placements,
         vec![crate::media::MediaPlacementRequest {
@@ -147,7 +148,7 @@ fn finalized_markdown_media_layout_reserves_two_rows_for_readable_inline_latex()
                 ordinal: 0,
             },
             rect: Rect::new(
-                /*x*/ 10, /*y*/ 0, /*width*/ 9, /*height*/ 2
+                /*x*/ 10, /*y*/ 0, /*width*/ 9, /*height*/ 3
             ),
         }]
     );
@@ -162,6 +163,7 @@ fn finalized_markdown_media_layout_reserves_two_rows_for_readable_inline_latex()
     • Gain is $x^2+y^2$
 
 
+
     placements:
     [
         MediaPlacementRequest {
@@ -174,7 +176,7 @@ fn finalized_markdown_media_layout_reserves_two_rows_for_readable_inline_latex()
                 x: 10,
                 y: 0,
                 width: 9,
-                height: 2,
+                height: 3,
             },
         },
     ]
