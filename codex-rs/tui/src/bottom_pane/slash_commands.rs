@@ -310,6 +310,7 @@ mod tests {
                 SlashCommand::Diff,
                 SlashCommand::Mention,
                 SlashCommand::Status,
+                SlashCommand::RichMedia,
                 SlashCommand::Pwd,
                 SlashCommand::Usage,
             ]

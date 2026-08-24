@@ -14,6 +14,7 @@ use crate::app_event::PermissionProfileSelection;
 use crate::app_event::PluginLocation;
 use crate::app_event::PluginRemoteSectionError;
 use crate::app_event::RateLimitRefreshOrigin;
+use crate::app_event::RichMediaAction;
 use crate::app_event::RunningTaskExitAction;
 #[cfg(target_os = "windows")]
 use crate::app_event::WindowsSandboxEnableMode;
@@ -229,6 +230,7 @@ mod platform_actions;
 mod plugin_mentions;
 mod replay_filter;
 mod resize_reflow;
+mod rich_media;
 mod safety_buffering;
 mod session_lifecycle;
 mod side;

@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
 > 更新时间：2026-08-24
-> 当前状态：Phase 1、Phase 2、Phase 3 已完成，下一步进入 Phase 4 交互与回归。Windows WezTerm 已通过本地 PNG/JPEG/WebP/GIF 静态首帧、公网 HTTPS、TUN Fake-IP fallback、finalized history、后续普通消息保留、滚动、resize/reflow、任务切换、`/clear` 与退出 retirement 的真实视觉验收；私网 HTTPS 和无协议能力均保持文本降级。LaTeX 已接入 `$...$`/`$$...$$` 解析、RaTeX 进程内透明 PNG 渲染、异步协调、主题/宽度缓存键、资源限制和原文回退，自动化验收与渲染 PNG 人工检查已完成；真实 WezTerm 公式交互矩阵按总体规划留到 Phase 4。Sixel 与 Kitty Unicode placeholders 仍为后续可选扩展。
+> 当前状态：Phase 1、Phase 2、Phase 3 已完成，Phase 4 交互与回归进行中。Windows WezTerm 已通过本地 PNG/JPEG/WebP/GIF 静态首帧、公网 HTTPS、TUN Fake-IP fallback、finalized history、后续普通消息保留、滚动、resize/reflow、任务切换、`/clear` 与退出 retirement 的真实视觉验收；私网 HTTPS 和无协议能力均保持文本降级。LaTeX 已接入 `$...$`/`$$...$$` 解析、RaTeX 进程内透明 PNG 渲染、异步协调、主题/宽度缓存键、资源限制和原文回退。Phase 4 第一单元新增 session-local `/rich-media [status|on|off]`，真实 WezTerm 已验证公式显示、开关重排、无 override 自动探测和 `/copy` 原始 Markdown 语义；resize、滚动和任务切换的公式专项视觉矩阵仍待用户侧关闭。Sixel 与 Kitty Unicode placeholders 仍为后续可选扩展。
 
 ## 新对话启动指令
 
@@ -27,7 +27,7 @@
 - 工作仓库：`D:\hermes\agent-repl\codex-rich`
 - 当前分支：`codex/rich-media`
 - 官方基线：`d44696065723a56b9de6538cd6348fcbe6c1542e`
-- 本轮继续开发前 HEAD：`d9f005366fb3bf9e63ba9101817f960c1e789a27 fix: 兼容 TUN 代理并保留 HTTPS 历史图片`
+- 本轮继续开发前 HEAD：`5bc2cbaf81 feat: 支持聊天 LaTeX 公式渲染`
 - 远程仓库只有：`upstream https://github.com/openai/codex.git`
 - 尚无 `origin`：用户还没有提供 fork 地址，不要自行猜测或推送。
 - 父目录的 `D:\hermes\agent-repl\graphify-out` 是未完成的旁路分析产物，没有可查询的 `graph.json`，不属于本仓库，不要加入提交。
@@ -35,6 +35,7 @@
 最近的实现提交（不含本轮待提交变更）：
 
 ```text
+5bc2cbaf81 feat: 支持聊天 LaTeX 公式渲染
 d9f005366f fix: 兼容 TUN 代理并保留 HTTPS 历史图片
 f63b79d547 feat: 接入 HTTPS 聊天图片显示
 1d059b5124 feat: 增加远程图片生产 DNS 解析器
@@ -466,7 +467,19 @@ Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、re
 
 ### 8.5 已完成 LaTeX 渲染
 
-Phase 3 已选择 RaTeX `0.1.14` 并完成行内/块级公式、流式未闭合边界、主题/宽度缓存键、透明 PNG、异步协调、资源限制、原文回退和常用工科样例集。自动化判据与 renderer PNG 检查已关闭；下一最小单元按总体规划进入 Phase 4，处理交互状态、开关、复制/会话回归和真实终端矩阵。不要重做 Phase 1/2 图片 smoke 或 Phase 3 后端尖峰，也不要同时扩展 Sixel、Kitty Unicode placeholders 或磁盘缓存。
+Phase 3 已选择 RaTeX `0.1.14` 并完成行内/块级公式、流式未闭合边界、主题/宽度缓存键、透明 PNG、异步协调、资源限制、原文回退和常用工科样例集。自动化判据与 renderer PNG 检查已关闭。不要重做 Phase 1/2 图片 smoke 或 Phase 3 后端尖峰，也不要同时扩展 Sixel、Kitty Unicode placeholders 或磁盘缓存。
+
+### 8.6 Phase 4 第一单元：运行时状态与开关
+
+- 新增 `/rich-media`、`/rich-media status`、`/rich-media on` 和 `/rich-media off`；命令在主任务、side conversation 和任务运行期间均由 App 层处理，不发给模型。
+- 状态卡明确报告启用状态、可用协议、占位行数、RaTeX、远程图片策略和命令格式。
+- 启动行为保持兼容：显式 `CODEX_TUI_MEDIA_CAPABILITY_OVERRIDE` 仍会自动启用；无 override 时启动保持文本模式，但记录安全探测出的 WezTerm/Kitty 能力，允许用户在当前 session 执行 `/rich-media on`。
+- 关闭前先 retirement 现有 placement，再清除协议并从原始 transcript 重排；重新开启同样从 source-backed transcript 重建，所以控制序列不会进入 Markdown、复制内容或持久化文本。
+- TDD 的 RED 为新增命令后 4 处非穷尽 match 编译失败；最小实现后 4 项定向测试通过，覆盖命令路由、on/off 参数、状态卡和关闭后的公式文本回退。
+- 完整 `just test -p codex-tui` 运行 3802 项：首轮 3799 通过、3 失败；其中 side conversation 命令清单是本轮新增命令造成的回归，补齐预期清单后定向复验 1/1 通过。最终只保留两项既有 Windows 基线失败：`changing_directory_preserves_project_trust_permissions_history_and_hooks` 与 `kitty_local_file_pet_image_uses_file_reference_without_inline_payload`。
+- `just fix -p codex-tui` 成功，仅报告 pets 既有两处 `expect_used` 警告；`just fmt` 因仓库缺少 `tools/buildifier` 失败，随后 `cargo fmt --all -- --check` 以退出码 0 通过。
+- Windows WezTerm 实测：显式 iTerm2 override 下，行内/块级公式占位与后续普通文本位置正确；`off` 后历史立即显示包含 LaTeX 源码的文本降级，`on` 后恢复图像占位；`/copy` 得到 133 字符原始 Markdown，包含两段 LaTeX、不含 ESC/OSC 字节；无 override 的独立窗格启动为 off，能探测 iTerm2 inline 并由 `/rich-media on` 成功启用。
+- 自动探测测试窗格已关闭；保留 workspace `codex-rich-phase4` 的 pane 1 供人工查看。原 workspace `default` 的 pane 0 未发送任何输入。
 
 ## 9. 尚未完成
 
@@ -474,8 +487,8 @@ Phase 3 已选择 RaTeX `0.1.14` 并完成行内/块级公式、流式未闭合�
 - 缓存尚无用户清理命令或磁盘层；
 - Sixel 编码仍留在 pets 专用实现，尚未完全移入通用媒体层；
 - 媒体节点尚未把公式/图片的源字节范围暴露为公共模型字段；
-- LaTeX 的真实 WezTerm 交互矩阵尚未执行；
-- 富媒体交互、配置开关、用户文档、最终打包尚未开始。
+- LaTeX 的真实 WezTerm 公式显示、运行时开关和复制语义已执行；公式专项 resize、滚动与任务切换仍待视觉确认；
+- 富媒体持久配置、用户文档与最终打包尚未开始；本轮只实现 session-local 开关，没有引入未在官方配置 schema 中定义的新键。
 
 阶段状态：
 
@@ -485,7 +498,7 @@ Phase 3 已选择 RaTeX `0.1.14` 并完成行内/块级公式、流式未闭合�
 | Phase 1：图片语法、协议、节点与布局 | 已完成 |
 | Phase 2：本地/远程图片 I/O 与缓存 | 已完成 |
 | Phase 3：LaTeX | 已完成 |
-| Phase 4：交互与配置 | 待开始 |
+| Phase 4：交互与配置 | 进行中（运行时状态与开关已完成） |
 | Phase 5：文档、技能与验收 | 待开始 |
 | Phase 6：打包/交付 | 待开始 |
 
@@ -505,7 +518,7 @@ Windows 下 `git status --short` 当前会显示：
 - TUI 测试优先 `just test -p codex-tui <filter>`；
 - 新行为必须先写失败测试，确认 RED 后做最小实现并确认 GREEN；
 - 本轮所有文件完成后统一提交，禁止 `git add .`；
-- 本轮提交信息：`feat: 支持聊天 LaTeX 公式渲染`。
+- 本轮预计提交信息：`feat: 增加富媒体运行时开关`。
 
 ## 11. 新对话的起手命令
 
@@ -529,7 +542,7 @@ Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\app\resize_reflow.rs
 Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\tui.rs
 ```
 
-不要重做已经通过的 Windows WezTerm 本地/HTTPS 图片 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、普通后续消息保留、滚动/resize、真实 `/resume` 任务切换、空闲 `/clear` retirement、本地异步 TUI 集成、PNG/JPEG/WebP/GIF 静态首帧、HTTPS 安全策略、Fake-IP DoH fallback、production DNS resolver、pinned HTTP adapter、远程 coordinator/writer 自动测试、RaTeX 后端尖峰、LaTeX 解析/缓存/透明覆盖或工科样例集。下一轮从 Phase 4 交互状态与真实终端公式矩阵开始。
+不要重做已经通过的 Windows WezTerm 本地/HTTPS 图片 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、普通后续消息保留、滚动/resize、真实 `/resume` 任务切换、空闲 `/clear` retirement、本地异步 TUI 集成、PNG/JPEG/WebP/GIF 静态首帧、HTTPS 安全策略、Fake-IP DoH fallback、production DNS resolver、pinned HTTP adapter、远程 coordinator/writer 自动测试、RaTeX 后端尖峰、LaTeX 解析/缓存/透明覆盖、工科样例集、`/rich-media` 命令路由或运行时 source-backed 重排。下一轮先关闭公式专项 resize、滚动和任务切换视觉矩阵，再评估持久配置与用户文档。
 
 ## 12. Phase 1 完成判据
 

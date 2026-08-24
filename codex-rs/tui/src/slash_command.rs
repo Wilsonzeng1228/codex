@@ -49,6 +49,7 @@ pub enum SlashCommand {
     Diff,
     Mention,
     Status,
+    RichMedia,
     Cd,
     #[strum(to_string = "pwd", serialize = "cwd")]
     Pwd,
@@ -108,6 +109,7 @@ impl SlashCommand {
             SlashCommand::Import => "import setup, this project, and recent chats from Claude Code",
             SlashCommand::Hooks => "view and manage lifecycle hooks",
             SlashCommand::Status => "show current session configuration and token usage",
+            SlashCommand::RichMedia => "show or change rich-media rendering",
             SlashCommand::Cd => "change the current working directory",
             SlashCommand::Pwd => "show the current working directory",
             SlashCommand::Usage => "view account usage or use a usage limit reset",
@@ -181,6 +183,7 @@ impl SlashCommand {
                 | SlashCommand::Btw
                 | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
+                | SlashCommand::RichMedia
         )
     }
 
@@ -198,6 +201,7 @@ impl SlashCommand {
                 | SlashCommand::Pwd
                 | SlashCommand::Usage
                 | SlashCommand::Ide
+                | SlashCommand::RichMedia
         )
     }
 
@@ -256,6 +260,7 @@ impl SlashCommand {
             | SlashCommand::Exit
             | SlashCommand::Side
             | SlashCommand::Btw => true,
+            SlashCommand::RichMedia => true,
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
             SlashCommand::Agents | SlashCommand::MultiAgents => true,
@@ -315,6 +320,9 @@ mod tests {
         assert!(SlashCommand::Raw.available_in_side_conversation());
         assert!(SlashCommand::Raw.supports_inline_args());
         assert!(SlashCommand::App.available_during_task());
+        assert!(SlashCommand::RichMedia.available_during_task());
+        assert!(SlashCommand::RichMedia.available_in_side_conversation());
+        assert!(SlashCommand::RichMedia.supports_inline_args());
     }
 
     #[test]

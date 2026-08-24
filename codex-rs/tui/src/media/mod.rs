@@ -57,11 +57,14 @@ pub(crate) use placement::MediaAnchor;
 pub(crate) use placement::MediaCellId;
 pub(crate) use placement::MediaPlacementRegistry;
 pub(crate) use placement::MediaPlacementUpdate;
+pub(crate) use protocol::ChatMediaCapability;
+pub(crate) use protocol::ChatMediaRuntimeStatus;
 pub(crate) use protocol::ImageProtocol;
 pub(crate) use protocol::ImageSupport;
 pub(crate) use protocol::ImageUnsupportedReason;
 pub(crate) use protocol::chat_media_capability_override_from_env;
 pub(crate) use protocol::detect_image_support;
+pub(crate) use protocol::detected_chat_media_capability_from_env;
 #[cfg(test)]
 pub(crate) use protocol::image_support_for_terminal;
 #[cfg(test)]

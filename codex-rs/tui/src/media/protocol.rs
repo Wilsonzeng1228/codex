@@ -16,6 +16,12 @@ pub(crate) struct ChatMediaCapability {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ChatMediaRuntimeStatus {
+    pub(crate) enabled: bool,
+    pub(crate) available: Option<ChatMediaCapability>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ImageProtocol {
     Iterm2Inline,
     Kitty,
@@ -66,6 +72,21 @@ pub(crate) fn chat_media_capability_override_from_env() -> Option<ChatMediaCapab
     parse_chat_media_capability_override(protocol.as_deref(), placeholder_rows.as_deref())
 }
 
+pub(crate) fn detected_chat_media_capability_from_env() -> Option<ChatMediaCapability> {
+    let ImageSupport::Supported(protocol) = detect_image_support() else {
+        return None;
+    };
+    if matches!(protocol, ImageProtocol::Sixel) {
+        return None;
+    }
+    let placeholder_rows = env::var("CODEX_TUI_MEDIA_PLACEHOLDER_ROWS").ok();
+    let placeholder_rows = parse_placeholder_rows(placeholder_rows.as_deref())?;
+    Some(ChatMediaCapability {
+        protocol,
+        placeholder_rows,
+    })
+}
+
 pub(crate) fn parse_chat_media_capability_override(
     protocol: Option<&str>,
     placeholder_rows: Option<&str>,
@@ -75,6 +96,16 @@ pub(crate) fn parse_chat_media_capability_override(
         Some("kitty") => ImageProtocol::Kitty,
         _ => return None,
     };
+    let placeholder_rows = parse_placeholder_rows(placeholder_rows)?;
+    Some(ChatMediaCapability {
+        protocol,
+        placeholder_rows,
+    })
+}
+
+fn parse_placeholder_rows(
+    placeholder_rows: Option<&str>,
+) -> Option<crate::media::MediaPlaceholderRows> {
     let placeholder_rows = match placeholder_rows {
         Some(rows) => rows.parse::<u16>().ok()?,
         None => DEFAULT_CHAT_MEDIA_PLACEHOLDER_ROWS,
@@ -82,10 +113,7 @@ pub(crate) fn parse_chat_media_capability_override(
     let placeholder_rows =
         (placeholder_rows <= MAX_CHAT_MEDIA_PLACEHOLDER_ROWS).then_some(placeholder_rows)?;
     let placeholder_rows = crate::media::MediaPlaceholderRows::try_from(placeholder_rows).ok()?;
-    Some(ChatMediaCapability {
-        protocol,
-        placeholder_rows,
-    })
+    Some(placeholder_rows)
 }
 
 pub(crate) fn image_support_for_terminal(info: &TerminalInfo) -> ImageSupport {

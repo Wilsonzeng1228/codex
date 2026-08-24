@@ -2146,6 +2146,41 @@ async fn slash_clear_requests_ui_clear_when_idle() {
 }
 
 #[tokio::test]
+async fn slash_rich_media_requests_runtime_status() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command(SlashCommand::RichMedia);
+
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::RichMedia {
+            action: crate::app_event::RichMediaAction::Status,
+        })
+    );
+}
+
+#[tokio::test]
+async fn slash_rich_media_accepts_on_and_off_arguments() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command_with_args(SlashCommand::RichMedia, "on".to_string(), Vec::new());
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::RichMedia {
+            action: crate::app_event::RichMediaAction::Enable,
+        })
+    );
+
+    chat.dispatch_command_with_args(SlashCommand::RichMedia, "off".to_string(), Vec::new());
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::RichMedia {
+            action: crate::app_event::RichMediaAction::Disable,
+        })
+    );
+}
+
+#[tokio::test]
 async fn slash_new_with_name_requests_named_session() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.bottom_pane

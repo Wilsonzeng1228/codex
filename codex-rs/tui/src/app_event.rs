@@ -113,6 +113,13 @@ pub(crate) enum ConsolidationScrollbackReflow {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RichMediaAction {
+    Status,
+    Enable,
+    Disable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) enum WindowsSandboxEnableMode {
     Elevated,
@@ -339,6 +346,11 @@ pub(crate) enum AppEvent {
     /// Re-render the transcript using the selected scrollback rendering mode.
     RawOutputModeChanged {
         enabled: bool,
+    },
+
+    /// Inspect or change the session-local rich-media rendering state.
+    RichMedia {
+        action: RichMediaAction,
     },
 
     /// Clear the current context, start a fresh session, and submit an initial user message.

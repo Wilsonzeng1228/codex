@@ -36,6 +36,7 @@ const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str =
     "Press Ctrl+C to return to the main thread first.";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
 const RAW_USAGE: &str = "Usage: /raw [on|off]";
+const RICH_MEDIA_USAGE: &str = "Usage: /rich-media [status|on|off]";
 const USAGE_CHATGPT_LOGIN_REQUIRED: &str = "Sign in with ChatGPT to use /usage.";
 
 impl ChatWidget {
@@ -465,6 +466,11 @@ impl ChatWidget {
                     );
                 }
             }
+            SlashCommand::RichMedia => {
+                self.app_event_tx.send(AppEvent::RichMedia {
+                    action: crate::app_event::RichMediaAction::Status,
+                });
+            }
             SlashCommand::Cd => {
                 self.dispatch_command_with_args(SlashCommand::Cd, "~".to_string(), Vec::new());
             }
@@ -753,6 +759,18 @@ impl ChatWidget {
                 }
                 _ => self.add_error_message(RAW_USAGE.to_string()),
             },
+            SlashCommand::RichMedia => {
+                let action = match trimmed.to_ascii_lowercase().as_str() {
+                    "status" => crate::app_event::RichMediaAction::Status,
+                    "on" => crate::app_event::RichMediaAction::Enable,
+                    "off" => crate::app_event::RichMediaAction::Disable,
+                    _ => {
+                        self.add_error_message(RICH_MEDIA_USAGE.to_string());
+                        return;
+                    }
+                };
+                self.app_event_tx.send(AppEvent::RichMedia { action });
+            }
             SlashCommand::Rename if !trimmed.is_empty() => {
                 if !self.ensure_thread_rename_allowed() {
                     return;
@@ -1122,6 +1140,7 @@ impl ChatWidget {
         match cmd {
             SlashCommand::Ide
             | SlashCommand::Status
+            | SlashCommand::RichMedia
             | SlashCommand::Pwd
             | SlashCommand::Usage
             | SlashCommand::DebugConfig

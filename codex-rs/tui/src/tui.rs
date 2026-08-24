@@ -584,6 +584,7 @@ pub struct Tui {
     event_broker: Arc<EventBroker>,
     pub(crate) terminal: Terminal,
     pending_history_lines: Vec<PendingHistoryLines>,
+    chat_media_available_capability: Option<crate::media::ChatMediaCapability>,
     chat_media_placeholder_rows: Option<crate::media::MediaPlaceholderRows>,
     chat_media_protocol: Option<crate::media::ImageProtocol>,
     media_placements: crate::media::MediaPlacementRegistry,
@@ -647,6 +648,8 @@ impl Tui {
         let _ = crate::terminal_palette::default_colors();
         let scrollback = ScrollbackStrategy::detect(&codex_terminal_detection::terminal_info());
         let chat_media_capability = crate::media::chat_media_capability_override_from_env();
+        let chat_media_available_capability =
+            chat_media_capability.or_else(crate::media::detected_chat_media_capability_from_env);
         let media_loads = crate::media::MediaLoadCoordinator::new(frame_requester.clone());
 
         Self {
@@ -655,6 +658,7 @@ impl Tui {
             event_broker: Arc::new(EventBroker::new()),
             terminal,
             pending_history_lines: vec![],
+            chat_media_available_capability,
             chat_media_placeholder_rows: chat_media_capability
                 .map(|capability| capability.placeholder_rows),
             chat_media_protocol: chat_media_capability.map(|capability| capability.protocol),
@@ -971,6 +975,35 @@ impl Tui {
         self.chat_media_placeholder_rows
     }
 
+    pub(crate) fn chat_media_runtime_status(&self) -> crate::media::ChatMediaRuntimeStatus {
+        crate::media::ChatMediaRuntimeStatus {
+            enabled: self.chat_media_protocol.is_some(),
+            available: self.chat_media_available_capability,
+        }
+    }
+
+    /// Change the session-local rich-media state without persisting configuration.
+    ///
+    /// Retirement must run while the old protocol is still active so Kitty placements receive
+    /// their delete commands before the protocol is disabled. The app then rebuilds scrollback
+    /// from transcript source using the new placeholder policy.
+    pub(crate) fn set_chat_media_enabled(&mut self, enabled: bool) -> bool {
+        if enabled {
+            let Some(capability) = self.chat_media_available_capability else {
+                return false;
+            };
+            self.chat_media_placeholder_rows = Some(capability.placeholder_rows);
+            self.chat_media_protocol = Some(capability.protocol);
+        } else {
+            self.replace_active_media_placements(Vec::new());
+            self.replace_history_media_placements(Vec::new());
+            self.chat_media_placeholder_rows = None;
+            self.chat_media_protocol = None;
+        }
+        self.frame_requester().schedule_frame();
+        true
+    }
+
     /// iTerm2 inline images have no stable placement ID and Windows WezTerm drops them when a
     /// later history row scrolls through the inline scroll region. Rebuild the bounded,
     /// source-backed transcript instead of incrementally appending once history owns an image.
@@ -1004,6 +1037,11 @@ impl Tui {
         self.chat_media_placeholder_rows = image_placeholder_rows;
         self.chat_media_protocol =
             image_placeholder_rows.map(|_| crate::media::ImageProtocol::Kitty);
+        self.chat_media_available_capability =
+            image_placeholder_rows.map(|placeholder_rows| crate::media::ChatMediaCapability {
+                protocol: crate::media::ImageProtocol::Kitty,
+                placeholder_rows,
+            });
     }
 
     #[cfg(test)]
@@ -1014,6 +1052,10 @@ impl Tui {
     ) {
         self.chat_media_placeholder_rows = Some(image_placeholder_rows);
         self.chat_media_protocol = Some(protocol);
+        self.chat_media_available_capability = Some(crate::media::ChatMediaCapability {
+            protocol,
+            placeholder_rows: image_placeholder_rows,
+        });
     }
 
     #[cfg(test)]
