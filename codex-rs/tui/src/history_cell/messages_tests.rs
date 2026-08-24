@@ -126,8 +126,8 @@ fn finalized_markdown_media_layout_keeps_block_latex_fallback_under_placement() 
 }
 
 #[test]
-fn finalized_markdown_media_layout_keeps_inline_latex_on_the_text_row() {
-    let source = "Gain is $x^2+y^2$ now.";
+fn finalized_markdown_media_layout_reserves_two_rows_for_readable_inline_latex() {
+    let source = "Gain is $x^2+y^2$";
     let cell = AgentMarkdownCell::new(source.to_string(), Path::new("/tmp"));
     let placeholder_rows =
         crate::media::MediaPlaceholderRows::try_from(3).expect("non-zero placeholder height");
@@ -135,8 +135,9 @@ fn finalized_markdown_media_layout_keeps_inline_latex_on_the_text_row() {
     let layout = cell.display_media_layout(/*width*/ 64, Some(placeholder_rows));
     let visible = visible_lines(layout.lines.clone());
 
-    assert_eq!(visible.len(), 1);
-    assert_eq!(visible[0].to_string(), "• Gain is $x^2+y^2$ now.");
+    assert_eq!(visible.len(), 2);
+    assert_eq!(visible[0].to_string(), "• Gain is $x^2+y^2$");
+    assert!(visible[1].to_string().trim().is_empty());
     assert_eq!(
         layout.placements,
         vec![crate::media::MediaPlacementRequest {
@@ -146,18 +147,20 @@ fn finalized_markdown_media_layout_keeps_inline_latex_on_the_text_row() {
                 ordinal: 0,
             },
             rect: Rect::new(
-                /*x*/ 10, /*y*/ 0, /*width*/ 9, /*height*/ 1
+                /*x*/ 10, /*y*/ 0, /*width*/ 9, /*height*/ 2
             ),
         }]
     );
     insta::assert_snapshot!(
         format!(
             "visible:\n{}\n\nplacements:\n{:#?}",
-            visible[0], layout.placements
+            visible.iter().map(Line::to_string).collect::<Vec<_>>().join("\n"),
+            layout.placements
         ),
         @r###"
     visible:
-    • Gain is $x^2+y^2$ now.
+    • Gain is $x^2+y^2$
+
 
     placements:
     [
@@ -171,7 +174,7 @@ fn finalized_markdown_media_layout_keeps_inline_latex_on_the_text_row() {
                 x: 10,
                 y: 0,
                 width: 9,
-                height: 1,
+                height: 2,
             },
         },
     ]

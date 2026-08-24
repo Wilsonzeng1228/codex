@@ -14,8 +14,10 @@ use super::MediaImageState;
 use super::MediaNode;
 use super::MediaPlacementRegistry;
 use super::MediaPlacementRequest;
+use super::TerminalCellPixels;
 use super::local_loader::LoadedLocalImage;
 use super::write_media_placement_update;
+use super::write_media_placement_update_with_cell_pixels;
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 
@@ -28,12 +30,16 @@ fn png_fixture() -> Vec<u8> {
 }
 
 fn loaded_fixture(bytes: Vec<u8>) -> LoadedLocalImage {
+    loaded_fixture_with_dimensions(bytes, /*width*/ 1, /*height*/ 1)
+}
+
+fn loaded_fixture_with_dimensions(bytes: Vec<u8>, width: u32, height: u32) -> LoadedLocalImage {
     LoadedLocalImage {
         bytes: Arc::from(bytes),
-        source_width: 1,
-        source_height: 1,
-        width: 1,
-        height: 1,
+        source_width: width,
+        source_height: height,
+        width,
+        height,
         can_use_source_file: true,
     }
 }
@@ -197,20 +203,25 @@ fn iterm2_writer_transmits_ready_latex_png_bytes() {
         ),
     )]);
     let fixture = png_fixture();
-    let loaded = loaded_fixture(fixture.clone());
+    let loaded =
+        loaded_fixture_with_dimensions(fixture.clone(), /*width*/ 600, /*height*/ 120);
     let mut output = Vec::new();
 
-    let report =
-        write_media_placement_update(&mut output, ImageProtocol::Iterm2Inline, &update, |_| {
-            MediaImageState::Ready(loaded.clone())
-        })
-        .expect("write rendered LaTeX PNG bytes");
+    let report = write_media_placement_update_with_cell_pixels(
+        &mut output,
+        ImageProtocol::Iterm2Inline,
+        &update,
+        TerminalCellPixels::new(/*width*/ 10, /*height*/ 20),
+        |_| MediaImageState::Ready(loaded.clone()),
+    )
+    .expect("write rendered LaTeX PNG bytes");
     let output = String::from_utf8(output).expect("iTerm2 command is UTF-8");
 
     assert!(output.contains(&format!(
-        "\x1b]1337;File=size={};width=30;height=auto;inline=1:",
+        "\x1b]1337;File=size={};width=300px;height=60px;preserveAspectRatio=1;inline=1:",
         fixture.len()
     )));
+    assert!(!output.contains("auto"));
     assert!(
         output.contains(&format!("\x1b[4;3H{}", " ".repeat(30))),
         "ready transparent LaTeX must clear the fallback cells before transmission"
@@ -221,7 +232,7 @@ fn iterm2_writer_transmits_ready_latex_png_bytes() {
 
 #[test]
 #[serial]
-fn iterm2_writer_bounds_inline_latex_by_single_row_height() {
+fn iterm2_writer_fits_inline_latex_inside_two_readable_rows() {
     let cell_id = MediaCellId::new(33).expect("non-zero media cell id");
     let mut registry = MediaPlacementRegistry::default();
     let update = registry.replace_active(vec![latex_request(
@@ -229,26 +240,49 @@ fn iterm2_writer_bounds_inline_latex_by_single_row_height() {
         "H(s)=\\frac{1}{s+1}",
         /*display*/ false,
         Rect::new(
-            /*x*/ 2, /*y*/ 3, /*width*/ 30, /*height*/ 1,
+            /*x*/ 2, /*y*/ 3, /*width*/ 30, /*height*/ 2,
         ),
     )]);
     let fixture = png_fixture();
-    let loaded = loaded_fixture(fixture.clone());
+    let loaded =
+        loaded_fixture_with_dimensions(fixture.clone(), /*width*/ 600, /*height*/ 120);
     let mut output = Vec::new();
 
-    let report =
-        write_media_placement_update(&mut output, ImageProtocol::Iterm2Inline, &update, |_| {
-            MediaImageState::Ready(loaded.clone())
-        })
-        .expect("write rendered inline LaTeX PNG bytes");
+    let report = write_media_placement_update_with_cell_pixels(
+        &mut output,
+        ImageProtocol::Iterm2Inline,
+        &update,
+        TerminalCellPixels::new(/*width*/ 10, /*height*/ 20),
+        |_| MediaImageState::Ready(loaded.clone()),
+    )
+    .expect("write rendered inline LaTeX PNG bytes");
     let output = String::from_utf8(output).expect("iTerm2 command is UTF-8");
 
     assert!(output.contains(&format!(
-        "\x1b]1337;File=size={};width=auto;height=1;inline=1:",
+        "\x1b]1337;File=size={};width=200px;height=40px;preserveAspectRatio=1;inline=1:",
         fixture.len()
     )));
+    assert!(!output.contains("auto"));
     assert_eq!(report.placed, 1);
     assert_eq!(report.skipped, 0);
+}
+
+#[test]
+fn terminal_cell_pixels_are_derived_from_window_pixels_and_grid_size() {
+    assert_eq!(
+        TerminalCellPixels::from_window_size(
+            ratatui::layout::Size::new(/*width*/ 80, /*height*/ 24),
+            ratatui::layout::Size::new(/*width*/ 800, /*height*/ 480),
+        ),
+        TerminalCellPixels::new(/*width*/ 10, /*height*/ 20),
+    );
+    assert_eq!(
+        TerminalCellPixels::from_window_size(
+            ratatui::layout::Size::new(/*width*/ 0, /*height*/ 0),
+            ratatui::layout::Size::new(/*width*/ 0, /*height*/ 0),
+        ),
+        TerminalCellPixels::default(),
+    );
 }
 
 #[test]

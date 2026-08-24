@@ -86,6 +86,8 @@ use url::Url;
 mod streaming;
 mod table_key_value;
 
+const INLINE_LATEX_PLACEHOLDER_ROWS: u16 = 2;
+
 pub(crate) use streaming::StreamingMarkdownRender;
 pub(crate) use streaming::render_streaming_markdown_lines_with_width_and_cwd;
 
@@ -2038,7 +2040,7 @@ where
                 .map(MediaPlaceholderRows::get)
                 .unwrap_or(1)
         } else {
-            1
+            INLINE_LATEX_PLACEHOLDER_ROWS
         };
 
         if formula_width == 0
@@ -2051,7 +2053,7 @@ where
 
         let row = self.text.len();
         self.push_image_fallback_span(latex.full_source.into());
-        if latex.display {
+        if latex.display || rows > 1 {
             for _ in 1..rows {
                 self.push_line(Line::default());
             }

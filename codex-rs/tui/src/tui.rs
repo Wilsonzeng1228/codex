@@ -1112,12 +1112,24 @@ impl Tui {
         let Some(protocol) = self.chat_media_protocol else {
             return;
         };
+        let cell_pixels = self
+            .terminal
+            .backend_mut()
+            .window_size()
+            .map(|window| {
+                crate::media::TerminalCellPixels::from_window_size(
+                    window.columns_rows,
+                    window.pixels,
+                )
+            })
+            .unwrap_or_default();
         let result = {
             let media_loads = &self.media_loads;
-            crate::media::write_media_placement_update(
+            crate::media::write_media_placement_update_with_cell_pixels(
                 self.terminal.backend_mut(),
                 protocol,
                 update,
+                cell_pixels,
                 |placement| media_loads.image_state(placement),
             )
         };
@@ -1196,6 +1208,17 @@ impl Tui {
             return Ok(());
         }
 
+        let cell_pixels = terminal
+            .backend_mut()
+            .window_size()
+            .map(|window| {
+                crate::media::TerminalCellPixels::from_window_size(
+                    window.columns_rows,
+                    window.pixels,
+                )
+            })
+            .unwrap_or_default();
+
         for batch in pending_history_lines.iter() {
             let mode = scrollback.history_insertion_mode(batch.wrap_policy);
             let update = match &batch.placement_mode {
@@ -1208,9 +1231,12 @@ impl Tui {
             };
             media_loads.reconcile(&update, crate::media::MediaPlacementDomain::History);
             let prepared = chat_media_protocol.and_then(|protocol| {
-                match crate::media::prepare_media_placement_update(protocol, &update, |placement| {
-                    media_loads.image_state(placement)
-                }) {
+                match crate::media::prepare_media_placement_update_with_cell_pixels(
+                    protocol,
+                    &update,
+                    cell_pixels,
+                    |placement| media_loads.image_state(placement),
+                ) {
                     Ok(prepared) => Some(prepared),
                     Err(error) => {
                         tracing::warn!(%error, "failed to prepare history media placements");

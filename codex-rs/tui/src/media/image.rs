@@ -42,12 +42,12 @@ pub(crate) fn iterm2_transmit_png_bytes(png: &[u8], columns: u16, rows: u16) -> 
     iterm2_transmit_png_bytes_with_dimensions(png, columns, rows)
 }
 
-pub(crate) fn iterm2_transmit_png_bytes_fit_width(png: &[u8], columns: u16) -> String {
-    iterm2_transmit_png_bytes_with_dimensions(png, columns, "auto")
-}
-
-pub(crate) fn iterm2_transmit_png_bytes_fit_height(png: &[u8], rows: u16) -> String {
-    iterm2_transmit_png_bytes_with_dimensions(png, "auto", rows)
+pub(crate) fn iterm2_transmit_png_bytes_pixels(png: &[u8], width: u32, height: u32) -> String {
+    let size = png.len();
+    let payload = general_purpose::STANDARD.encode(png);
+    format!(
+        "{ESC}]1337;File=size={size};width={width}px;height={height}px;preserveAspectRatio=1;inline=1:{payload}{ST}"
+    )
 }
 
 fn iterm2_transmit_png_bytes_with_dimensions(

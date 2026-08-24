@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
 > 更新时间：2026-08-24
-> 当前状态：Phase 1、Phase 2、Phase 3 已完成，Phase 4 交互与回归进行中。Windows WezTerm 已通过本地 PNG/JPEG/WebP/GIF 静态首帧、公网 HTTPS、TUN Fake-IP fallback、finalized history、后续普通消息保留、滚动、resize/reflow、任务切换、`/clear` 与退出 retirement 的真实视觉验收；私网 HTTPS 和无协议能力均保持文本降级。LaTeX 已接入 `$...$`/`$$...$$` 解析、RaTeX 进程内透明 PNG 渲染、异步协调、主题/宽度缓存键、资源限制和原文回退。Phase 4 已新增 session-local `/rich-media [status|on|off]`，真实 WezTerm 已验证公式显示、开关重排、无 override 自动探测和 `/copy` 原始 Markdown 语义；小窗口实测发现的公式裁切已按行内/块级分别改为单轴约束并完成自动化回归，仍待用户侧用新二进制复验 resize、滚动和任务切换视觉矩阵。Sixel 与 Kitty Unicode placeholders 仍为后续可选扩展。
+> 当前状态：Phase 1、Phase 2、Phase 3 已完成，Phase 4 交互与回归进行中。Windows WezTerm 已通过本地 PNG/JPEG/WebP/GIF 静态首帧、公网 HTTPS、TUN Fake-IP fallback、finalized history、后续普通消息保留、滚动、resize/reflow、任务切换、`/clear` 与退出 retirement 的真实视觉验收；私网 HTTPS 和无协议能力均保持文本降级。LaTeX 已接入 `$...$`/`$$...$$` 解析、RaTeX 进程内透明 PNG 渲染、异步协调、主题/宽度缓存键、资源限制和原文回退。Phase 4 已新增 session-local `/rich-media [status|on|off]`，真实 WezTerm 已验证公式显示、开关重排、无 override 自动探测和 `/copy` 原始 Markdown 语义；第一次小窗口单轴 `auto` 约束经真实截图证明仍有“行内过小、块级溢出”，现已改为按终端实际 cell 像素和占位矩形等比限界，行内固定预留两行，自动化回归完成，仍待用户侧用新二进制复验视觉矩阵。Sixel 与 Kitty Unicode placeholders 仍为后续可选扩展。
 
 ## 新对话启动指令
 
@@ -27,7 +27,7 @@
 - 工作仓库：`D:\hermes\agent-repl\codex-rich`
 - 当前分支：`codex/rich-media`
 - 官方基线：`d44696065723a56b9de6538cd6348fcbe6c1542e`
-- 本轮小窗口修复前 HEAD：`bc5835a4b6 feat: 增加富媒体运行时开关`
+- 本轮第二次小窗口修复前 HEAD：`99134b7584 fix: 修复小窗口公式裁切`
 - 远程仓库只有：`upstream https://github.com/openai/codex.git`
 - 尚无 `origin`：用户还没有提供 fork 地址，不要自行猜测或推送。
 - 父目录的 `D:\hermes\agent-repl\graphify-out` 是未完成的旁路分析产物，没有可查询的 `graph.json`，不属于本仓库，不要加入提交。
@@ -35,6 +35,7 @@
 最近的实现提交（不含本轮待提交变更）：
 
 ```text
+99134b7584 fix: 修复小窗口公式裁切
 bc5835a4b6 feat: 增加富媒体运行时开关
 5bc2cbaf81 feat: 支持聊天 LaTeX 公式渲染
 d9f005366f fix: 兼容 TUN 代理并保留 HTTPS 历史图片
@@ -491,13 +492,22 @@ Phase 3 已选择 RaTeX `0.1.14` 并完成行内/块级公式、流式未闭合�
 - `just fix -p codex-tui` 退出码 0，仅保留 pets 既有两处 `expect_used` 警告；`just fmt` 仍因仓库缺少 `tools/buildifier` 失败，随后 `cargo fmt --all -- --check` 退出码 0。按纪律未在 fix/fmt 后重跑测试。
 - 已用 `CARGO_INCREMENTAL=0`、`CARGO_BUILD_JOBS=1` 重新构建 `codex-rs/target/debug/codex.exe`；构建前后 target 均约 15.95 GiB，低于 18 GiB 停止线。真实小窗口视觉复验必须重启旧进程后使用该新二进制。
 
+### 8.8 Phase 4 小窗口公式像素限界修复
+
+- 用户对 8.7 的新二进制做真实 WezTerm 复验后确认：行内公式被压进单行导致分式过小看不清，块公式仍超出小窗口而显示不完整。因此 8.7 的单轴 `auto` 方案不能作为最终修复。
+- 新实现让行内公式固定预留两行；iTerm2 writer 从 Ratatui backend 的 `columns_rows` 与 `pixels` 推导当前 cell 像素尺寸，再结合公式 PNG 固有宽高和 placement 矩形计算同时受宽、高约束的等比缩小尺寸。公式控制序列改为显式 `width=<N>px;height=<M>px;preserveAspectRatio=1`，不再发送 `auto`；普通图片固定 cell 尺寸与 Kitty 路径保持不变。终端未报告像素尺寸时采用 8x16 px/cell 的保守回退。
+- 布局 TDD 的 RED 精确表现为期望两行而实际只有一行；最小实现与快照更新后定向测试 1/1 通过。writer TDD 的 RED 为新 `TerminalCellPixels` 和带 cell 像素 writer 尚不存在的 E0432 编译错误；实现后 `iterm2_writer` 4/4 通过，随后 `terminal_writer` 11/11 通过，覆盖块级宽度限界、行内两行高度限界、无 `auto`、普通图片、光标恢复和损坏 PNG 回归。
+- 完整 `just test -p codex-tui` 共运行 3804 项，3802 项通过、2 项失败、10 项跳过；失败仍是既有项目权限历史测试和 pets Kitty 本地文件测试，没有新增失败。
+- `just fix -p codex-tui` 退出码 0，仅保留 pets 既有两处 `expect_used` 警告；`just fmt` 仍因仓库缺少 `tools/buildifier` 失败，随后 `cargo fmt --all -- --check` 退出码 0。按纪律未在 fix/fmt 后重跑测试。
+- `cargo build -p codex-cli` 已完成链接，但运行中的旧 `target/debug/codex.exe` 被 Windows 锁定，Cargo 在最终覆盖步骤报 `os error 5`。已将新产物复制为 `codex-rs/target/debug/codex-rich-next.exe`，`--version` 输出 `codex-cli 0.0.0`，时间戳为 2026-08-24 22:21:03；用户复验本轮时应直接启动该独立文件。构建前 target 约 15.95 GiB，低于 18 GiB 停止线。
+
 ## 9. 尚未完成
 
 - active streaming 瞬间没有单独截图，当前可靠证据集中在 finalized history、滚动、resize/reflow、退出 retirement 与文本降级；
 - 缓存尚无用户清理命令或磁盘层；
 - Sixel 编码仍留在 pets 专用实现，尚未完全移入通用媒体层；
 - 媒体节点尚未把公式/图片的源字节范围暴露为公共模型字段；
-- LaTeX 的真实 WezTerm 公式显示、运行时开关和复制语义已执行；小窗口裁切的代码修复与自动化回归已完成，公式专项 resize、滚动与任务切换仍待新二进制视觉确认；
+- LaTeX 的真实 WezTerm 公式显示、运行时开关和复制语义已执行；第二版小窗口像素限界修复与自动化回归已完成，行内可读性、块级完整性以及公式专项 resize、滚动与任务切换仍待 `codex-rich-next.exe` 真实视觉确认；
 - 富媒体持久配置、用户文档与最终打包尚未开始；本轮只实现 session-local 开关，没有引入未在官方配置 schema 中定义的新键。
 
 阶段状态：
@@ -528,7 +538,7 @@ Windows 下 `git status --short` 当前会显示：
 - TUI 测试优先 `just test -p codex-tui <filter>`；
 - 新行为必须先写失败测试，确认 RED 后做最小实现并确认 GREEN；
 - 本轮所有文件完成后统一提交，禁止 `git add .`；
-- 本轮预计提交信息：`fix: 修复小窗口公式裁切`。
+- 本轮预计提交信息：`fix: 按终端像素约束公式尺寸`。
 
 ## 11. 新对话的起手命令
 
@@ -552,7 +562,7 @@ Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\app\resize_reflow.rs
 Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\tui.rs
 ```
 
-不要重做已经通过的 Windows WezTerm 本地/HTTPS 图片 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、普通后续消息保留、滚动/resize、真实 `/resume` 任务切换、空闲 `/clear` retirement、本地异步 TUI 集成、PNG/JPEG/WebP/GIF 静态首帧、HTTPS 安全策略、Fake-IP DoH fallback、production DNS resolver、pinned HTTP adapter、远程 coordinator/writer 自动测试、RaTeX 后端尖峰、LaTeX 解析/缓存/透明覆盖、工科样例集、`/rich-media` 命令路由、运行时 source-backed 重排或小窗口公式单轴约束。下一轮先用新二进制关闭公式专项 resize、滚动和任务切换视觉矩阵，再评估持久配置与用户文档。
+不要重做已经通过的 Windows WezTerm 本地/HTTPS 图片 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、普通后续消息保留、滚动/resize、真实 `/resume` 任务切换、空闲 `/clear` retirement、本地异步 TUI 集成、PNG/JPEG/WebP/GIF 静态首帧、HTTPS 安全策略、Fake-IP DoH fallback、production DNS resolver、pinned HTTP adapter、远程 coordinator/writer 自动测试、RaTeX 后端尖峰、LaTeX 解析/缓存/透明覆盖、工科样例集、`/rich-media` 命令路由、运行时 source-backed 重排、小窗口单轴约束失败复现或公式像素限界自动化回归。下一轮先用 `codex-rich-next.exe` 关闭行内可读性、块级完整性以及公式专项 resize、滚动和任务切换视觉矩阵，再评估持久配置与用户文档。
 
 ## 12. Phase 1 完成判据
 

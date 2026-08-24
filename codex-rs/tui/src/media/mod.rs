@@ -76,5 +76,8 @@ pub(crate) use resolver::ImageSource;
 pub(crate) use resolver::ImageSourceError;
 pub(crate) use resolver::resolve_image_source;
 pub(crate) use terminal_writer::PreparedMediaPlacement;
-pub(crate) use terminal_writer::prepare_media_placement_update;
+pub(crate) use terminal_writer::TerminalCellPixels;
+pub(crate) use terminal_writer::prepare_media_placement_update_with_cell_pixels;
+#[cfg(test)]
 pub(crate) use terminal_writer::write_media_placement_update;
+pub(crate) use terminal_writer::write_media_placement_update_with_cell_pixels;
