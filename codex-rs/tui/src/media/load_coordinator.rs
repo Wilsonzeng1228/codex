@@ -10,6 +10,9 @@ use tokio::task::JoinHandle;
 use url::Url;
 
 use super::ImageSource;
+use super::LatexRenderError;
+use super::LatexRenderRequest;
+use super::LatexRenderer;
 use super::MediaId;
 use super::MediaNode;
 use super::MediaPlacementUpdate;
@@ -72,6 +75,13 @@ enum LoadOutcome {
 enum MediaImageLoadError {
     Local(LocalImageLoadError),
     Remote(RemoteImageDownloadError),
+    Latex(LatexRenderError),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum MediaLoadKey {
+    Image(ImageSource),
+    Latex(LatexRenderRequest),
 }
 
 struct SourceLoad {
@@ -82,7 +92,7 @@ struct SourceLoad {
 }
 
 struct CompletedLoad {
-    source: ImageSource,
+    source: MediaLoadKey,
     generation: u64,
     result: Result<LoadedLocalImage, MediaImageLoadError>,
 }
@@ -95,12 +105,13 @@ struct CompletedLoad {
 pub(crate) struct MediaLoadCoordinator {
     local_loader: Arc<LocalImageLoadFn>,
     remote_loader: Arc<RemoteImageLoadFn>,
+    latex_renderer: LatexRenderer,
     semaphore: Arc<Semaphore>,
     frame_requester: FrameRequester,
     completion_tx: mpsc::UnboundedSender<CompletedLoad>,
     completion_rx: mpsc::UnboundedReceiver<CompletedLoad>,
-    sources: HashMap<ImageSource, SourceLoad>,
-    anchor_sources: HashMap<MediaAnchor, ImageSource>,
+    sources: HashMap<MediaLoadKey, SourceLoad>,
+    anchor_sources: HashMap<MediaAnchor, MediaLoadKey>,
     id_anchors: HashMap<MediaId, MediaAnchor>,
     next_generation: u64,
 }
@@ -158,6 +169,7 @@ impl MediaLoadCoordinator {
         Self {
             local_loader,
             remote_loader,
+            latex_renderer: LatexRenderer::default(),
             semaphore: Arc::new(Semaphore::new(max_concurrent.max(1))),
             frame_requester,
             completion_tx,
@@ -209,6 +221,9 @@ impl MediaLoadCoordinator {
                         }
                         MediaImageLoadError::Remote(error) => {
                             tracing::debug!(source = ?loaded.source, %error, "failed to prepare remote chat image");
+                        }
+                        MediaImageLoadError::Latex(error) => {
+                            tracing::debug!(source = ?loaded.source, %error, "failed to render chat LaTeX");
                         }
                     }
                     source.outcome = Some(LoadOutcome::Failed(error));
@@ -278,11 +293,21 @@ impl MediaLoadCoordinator {
 
     fn attach(&mut self, placement: &RegisteredMediaPlacement, domain: MediaPlacementDomain) {
         let source = match &placement.request.request.node {
-            MediaNode::Image { source, .. } => source,
-        };
-        let Ok(source) = resolve_image_source(source) else {
-            self.detach_id(placement.id);
-            return;
+            MediaNode::Image { source, .. } => match resolve_image_source(source) {
+                Ok(source) => MediaLoadKey::Image(source),
+                Err(_) => {
+                    self.detach_id(placement.id);
+                    return;
+                }
+            },
+            MediaNode::Latex {
+                source, display, ..
+            } => MediaLoadKey::Latex(LatexRenderRequest::new(
+                source.clone(),
+                *display,
+                placement.request.request.rect.width,
+                latex_foreground(),
+            )),
         };
         let anchor = placement.request.anchor;
         if self
@@ -333,9 +358,10 @@ impl MediaLoadCoordinator {
         );
     }
 
-    fn spawn_load(&self, source: ImageSource, generation: u64) -> JoinHandle<()> {
+    fn spawn_load(&self, source: MediaLoadKey, generation: u64) -> JoinHandle<()> {
         let local_loader = Arc::clone(&self.local_loader);
         let remote_loader = Arc::clone(&self.remote_loader);
+        let latex_renderer = self.latex_renderer.clone();
         let semaphore = Arc::clone(&self.semaphore);
         let completion_tx = self.completion_tx.clone();
         let frame_requester = self.frame_requester.clone();
@@ -344,12 +370,16 @@ impl MediaLoadCoordinator {
                 return;
             };
             let result = match source.clone() {
-                ImageSource::Local(path) => {
+                MediaLoadKey::Image(ImageSource::Local(path)) => {
                     local_loader(path).await.map_err(MediaImageLoadError::Local)
                 }
-                ImageSource::Https(url) => remote_loader(url)
+                MediaLoadKey::Image(ImageSource::Https(url)) => remote_loader(url)
                     .await
                     .map_err(MediaImageLoadError::Remote),
+                MediaLoadKey::Latex(request) => latex_renderer
+                    .render(request)
+                    .await
+                    .map_err(MediaImageLoadError::Latex),
             };
             if completion_tx
                 .send(CompletedLoad {
@@ -387,6 +417,10 @@ impl MediaLoadCoordinator {
             task.abort();
         }
     }
+}
+
+fn latex_foreground() -> (u8, u8, u8) {
+    crate::terminal_palette::default_fg().unwrap_or((238, 238, 238))
 }
 
 impl Drop for MediaLoadCoordinator {

@@ -30,6 +30,7 @@ pub(crate) struct MediaWriteReport {
 pub(crate) struct PreparedMediaPlacement {
     pub(crate) rect: Rect,
     pub(crate) command: String,
+    pub(crate) clear_cells: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -64,12 +65,16 @@ pub(crate) fn prepare_media_placement_update(
         ..PreparedMediaUpdate::default()
     };
     for placement in &update.placed {
+        let clear_cells = matches!(placement.request.request.node, MediaNode::Latex { .. });
         let source = match &placement.request.request.node {
-            MediaNode::Image { source, .. } => source,
-        };
-        let Ok(source) = resolve_image_source(source) else {
-            prepared.report.skipped += 1;
-            continue;
+            MediaNode::Image { source, .. } => match resolve_image_source(source) {
+                Ok(source) => Some(source),
+                Err(_) => {
+                    prepared.report.skipped += 1;
+                    continue;
+                }
+            },
+            MediaNode::Latex { .. } => None,
         };
         let loaded = match image_state(placement) {
             MediaImageState::Ready(loaded) => loaded,
@@ -94,7 +99,7 @@ pub(crate) fn prepare_media_placement_update(
                 Some(placement.id),
             )?,
             ImageProtocol::KittyLocalFile => {
-                if let ImageSource::Local(path) = &source
+                if let Some(ImageSource::Local(path)) = &source
                     && loaded.can_use_source_file
                 {
                     kitty_transmit_png_file_with_id(
@@ -114,9 +119,11 @@ pub(crate) fn prepare_media_placement_update(
             }
             ImageProtocol::Sixel => unreachable!("Sixel rejected above"),
         };
-        prepared
-            .placements
-            .push(PreparedMediaPlacement { rect, command });
+        prepared.placements.push(PreparedMediaPlacement {
+            rect,
+            command,
+            clear_cells,
+        });
         prepared.report.placed += 1;
     }
     Ok(prepared)
@@ -145,11 +152,18 @@ pub(crate) fn write_prepared_media_update(
         writer.write_all(command.as_bytes())?;
     }
     for placement in &prepared.placements {
-        queue!(
-            writer,
-            SavePosition,
-            MoveTo(placement.rect.x, placement.rect.y)
-        )?;
+        queue!(writer, SavePosition)?;
+        if placement.clear_cells {
+            let blank_row = " ".repeat(usize::from(placement.rect.width));
+            for row in 0..placement.rect.height {
+                queue!(
+                    writer,
+                    MoveTo(placement.rect.x, placement.rect.y.saturating_add(row))
+                )?;
+                writer.write_all(blank_row.as_bytes())?;
+            }
+        }
+        queue!(writer, MoveTo(placement.rect.x, placement.rect.y))?;
         writer.write_all(placement.command.as_bytes())?;
         queue!(writer, RestorePosition)?;
     }

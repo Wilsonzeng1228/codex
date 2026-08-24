@@ -79,6 +79,7 @@ itertools = { workspace = true }
 lazy_static = { workspace = true }
 pathdiff = { workspace = true }
 pulldown-cmark = { workspace = true }
+pulldown-cmark-latex = { workspace = true }
 rand = { workspace = true }
 ratatui = { workspace = true, features = [
     "scrolling-regions",
@@ -87,6 +88,10 @@ ratatui = { workspace = true, features = [
     "unstable-widget-ref",
 ] }
 ratatui-macros = { workspace = true }
+ratex-layout = { workspace = true }
+ratex-parser = { workspace = true }
+ratex-render = { workspace = true }
+ratex-types = { workspace = true }
 regex-lite = { workspace = true }
 rmcp = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

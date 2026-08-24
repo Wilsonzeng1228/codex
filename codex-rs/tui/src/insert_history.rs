@@ -3,6 +3,7 @@
 //! Codex uses the terminal scrollback itself for finalized chat history, so inserting a history
 //! cell is an escape-sequence operation rather than a normal ratatui render.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::io;
 use std::io::Write;
@@ -164,7 +165,8 @@ where
                 if index > 0 {
                     queue!(writer, Print("\r\n"))?;
                 }
-                write_history_line(writer, line, wrap_width)?;
+                let line = clear_ready_media_fallback(line, logical_rows[index], media_placements);
+                write_history_line(writer, &line, wrap_width)?;
                 if index == 0 || logical_rows[index - 1] != logical_rows[index] {
                     write_history_media_for_logical_row(
                         writer,
@@ -238,7 +240,8 @@ where
 
             for (index, line) in wrapped.iter().enumerate() {
                 queue!(writer, Print("\r\n"))?;
-                write_history_line(writer, line, wrap_width)?;
+                let line = clear_ready_media_fallback(line, logical_rows[index], media_placements);
+                write_history_line(writer, &line, wrap_width)?;
                 if index == 0 || logical_rows[index - 1] != logical_rows[index] {
                     write_history_media_for_logical_row(
                         writer,
@@ -388,6 +391,59 @@ fn write_history_line<W: Write>(
     };
     let decorated = decorate_spans(&merged_line);
     write_spans(writer, decorated.iter())
+}
+
+fn clear_ready_media_fallback<'a>(
+    line: &'a HyperlinkLine,
+    logical_row: u16,
+    placements: &[crate::media::PreparedMediaPlacement],
+) -> Cow<'a, HyperlinkLine> {
+    let clear_ranges = placements
+        .iter()
+        .filter(|placement| {
+            placement.clear_cells
+                && logical_row >= placement.rect.y
+                && logical_row < placement.rect.y.saturating_add(placement.rect.height)
+        })
+        .map(|placement| {
+            let start = usize::from(placement.rect.x);
+            start..start.saturating_add(usize::from(placement.rect.width))
+        })
+        .collect::<Vec<_>>();
+    if clear_ranges.is_empty() {
+        return Cow::Borrowed(line);
+    }
+
+    let mut cleared = line.clone();
+    let mut column = 0usize;
+    let mut previous_cleared = false;
+    for span in &mut cleared.line.spans {
+        let mut content = String::with_capacity(span.content.len());
+        for ch in span.content.chars() {
+            let width = crate::width::char_width(ch);
+            let should_clear = if width == 0 {
+                previous_cleared
+            } else {
+                clear_ranges
+                    .iter()
+                    .any(|range| column < range.end && column.saturating_add(width) > range.start)
+            };
+            if should_clear {
+                content.push_str(&" ".repeat(width));
+            } else {
+                content.push(ch);
+            }
+            column = column.saturating_add(width);
+            previous_cleared = should_clear;
+        }
+        span.content = content.into();
+    }
+    cleared.hyperlinks.retain(|hyperlink| {
+        !clear_ranges
+            .iter()
+            .any(|range| hyperlink.columns.start < range.end && hyperlink.columns.end > range.start)
+    });
+    Cow::Owned(cleared)
 }
 
 fn write_history_media_for_logical_row<W: Write>(
@@ -572,6 +628,7 @@ mod tests {
                 /*x*/ 4, /*y*/ 1, /*width*/ 12, /*height*/ 3,
             ),
             command: "<kitty-placement>".to_string(),
+            clear_cells: false,
         };
         let mut output = Vec::new();
 
@@ -594,6 +651,26 @@ mod tests {
             !output.contains("H"),
             "history placement must not use an absolute screen row"
         );
+    }
+
+    #[test]
+    fn ready_history_latex_masks_only_its_fallback_cells() {
+        let line = HyperlinkLine::new(Line::from("• Gain is $x^2$ now."));
+        let placement = crate::media::PreparedMediaPlacement {
+            rect: Rect::new(
+                /*x*/ 10, /*y*/ 0, /*width*/ 5, /*height*/ 1,
+            ),
+            command: "<latex-placement>".to_string(),
+            clear_cells: true,
+        };
+
+        let cleared = clear_ready_media_fallback(&line, /*logical_row*/ 0, &[placement]);
+
+        assert_eq!(cleared.width(), line.width());
+        assert!(!cleared.line.to_string().contains("$x^2$"));
+        assert!(cleared.line.to_string().contains("Gain is"));
+        assert!(cleared.line.to_string().contains("now."));
+        assert!(line.line.to_string().contains("$x^2$"));
     }
 
     #[test]

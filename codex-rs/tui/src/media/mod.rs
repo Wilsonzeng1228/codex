@@ -1,4 +1,6 @@
 mod image;
+mod latex;
+mod latex_renderer;
 mod layout;
 mod load_coordinator;
 mod local_loader;
@@ -11,6 +13,8 @@ mod terminal_writer;
 
 #[cfg(test)]
 mod image_tests;
+#[cfg(test)]
+mod latex_renderer_tests;
 #[cfg(test)]
 mod load_coordinator_tests;
 #[cfg(test)]
@@ -33,6 +37,11 @@ pub(crate) use image::iterm2_transmit_png;
 pub(crate) use image::kitty_delete_image;
 pub(crate) use image::kitty_transmit_png_file_with_id;
 pub(crate) use image::kitty_transmit_png_with_id;
+pub(crate) use latex::LatexSpec;
+pub(crate) use latex::rewrite_latex;
+pub(crate) use latex_renderer::LatexRenderError;
+pub(crate) use latex_renderer::LatexRenderRequest;
+pub(crate) use latex_renderer::LatexRenderer;
 pub(crate) use layout::MediaLayout;
 pub(crate) use layout::MediaPlaceholderRows;
 pub(crate) use layout::MediaPlacementRequest;

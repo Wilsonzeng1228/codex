@@ -46,7 +46,7 @@ pub(crate) struct AnchoredMediaPlacementRequest {
 impl AnchoredMediaPlacementRequest {
     pub(crate) fn new(cell_id: MediaCellId, request: MediaPlacementRequest) -> Self {
         let ordinal = match &request.node {
-            MediaNode::Image { ordinal, .. } => *ordinal,
+            MediaNode::Image { ordinal, .. } | MediaNode::Latex { ordinal, .. } => *ordinal,
         };
         Self {
             anchor: MediaAnchor { cell_id, ordinal },

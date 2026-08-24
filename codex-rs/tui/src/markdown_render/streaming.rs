@@ -54,6 +54,7 @@ pub(crate) fn render_streaming_markdown_lines_with_width_and_cwd(
         cwd,
         &never_hide_link_destination,
         /*image_placeholder_rows*/ None,
+        /*latex_specs*/ &[],
     );
     writer.run();
     StreamingMarkdownRender {

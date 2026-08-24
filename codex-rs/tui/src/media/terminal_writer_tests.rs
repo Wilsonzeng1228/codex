@@ -56,6 +56,20 @@ fn local_request(
     )
 }
 
+fn latex_request(cell_id: MediaCellId, source: &str, rect: Rect) -> AnchoredMediaPlacementRequest {
+    AnchoredMediaPlacementRequest::new(
+        cell_id,
+        MediaPlacementRequest {
+            node: MediaNode::Latex {
+                source: source.to_string(),
+                display: true,
+                ordinal: 0,
+            },
+            rect,
+        },
+    )
+}
+
 #[test]
 #[serial]
 fn kitty_writer_deletes_retired_ids_before_replaying_local_png_placement() {
@@ -160,6 +174,41 @@ fn iterm2_writer_transmits_ready_https_image_bytes() {
         "\x1b]1337;File=size={};width=10;height=3;inline=1:",
         fixture.len()
     )));
+    assert_eq!(report.placed, 1);
+    assert_eq!(report.skipped, 0);
+}
+
+#[test]
+#[serial]
+fn iterm2_writer_transmits_ready_latex_png_bytes() {
+    let cell_id = MediaCellId::new(32).expect("non-zero media cell id");
+    let mut registry = MediaPlacementRegistry::default();
+    let update = registry.replace_active(vec![latex_request(
+        cell_id,
+        "\\frac{1}{s+1}",
+        Rect::new(
+            /*x*/ 2, /*y*/ 3, /*width*/ 30, /*height*/ 3,
+        ),
+    )]);
+    let fixture = png_fixture();
+    let loaded = loaded_fixture(fixture.clone());
+    let mut output = Vec::new();
+
+    let report =
+        write_media_placement_update(&mut output, ImageProtocol::Iterm2Inline, &update, |_| {
+            MediaImageState::Ready(loaded.clone())
+        })
+        .expect("write rendered LaTeX PNG bytes");
+    let output = String::from_utf8(output).expect("iTerm2 command is UTF-8");
+
+    assert!(output.contains(&format!(
+        "\x1b]1337;File=size={};width=30;height=3;inline=1:",
+        fixture.len()
+    )));
+    assert!(
+        output.contains(&format!("\x1b[4;3H{}", " ".repeat(30))),
+        "ready transparent LaTeX must clear the fallback cells before transmission"
+    );
     assert_eq!(report.placed, 1);
     assert_eq!(report.skipped, 0);
 }

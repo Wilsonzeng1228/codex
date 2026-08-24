@@ -95,6 +95,109 @@ fn finalized_markdown_media_layout_reserves_rows_at_each_image_ordinal() {
 }
 
 #[test]
+fn finalized_markdown_media_layout_keeps_block_latex_fallback_under_placement() {
+    let source = "Before\n\n$$\\frac{1}{s+1}$$\n\nAfter";
+    let cell = AgentMarkdownCell::new(source.to_string(), Path::new("/tmp"));
+    let placeholder_rows =
+        crate::media::MediaPlaceholderRows::try_from(3).expect("non-zero placeholder height");
+
+    let layout = cell.display_media_layout(/*width*/ 32, Some(placeholder_rows));
+    let visible_text = visible_lines(layout.lines.clone())
+        .iter()
+        .map(Line::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert_eq!(
+        layout.placements,
+        vec![crate::media::MediaPlacementRequest {
+            node: crate::media::MediaNode::Latex {
+                source: "\\frac{1}{s+1}".to_string(),
+                display: true,
+                ordinal: 0,
+            },
+            rect: Rect::new(
+                /*x*/ 2, /*y*/ 2, /*width*/ 30, /*height*/ 3
+            ),
+        }]
+    );
+    assert!(visible_text.contains("$$\\frac{1}{s+1}$$"));
+    assert_eq!(cell.raw_lines(), raw_lines_from_source(source));
+}
+
+#[test]
+fn finalized_markdown_media_layout_keeps_inline_latex_on_the_text_row() {
+    let source = "Gain is $x^2+y^2$ now.";
+    let cell = AgentMarkdownCell::new(source.to_string(), Path::new("/tmp"));
+    let placeholder_rows =
+        crate::media::MediaPlaceholderRows::try_from(3).expect("non-zero placeholder height");
+
+    let layout = cell.display_media_layout(/*width*/ 64, Some(placeholder_rows));
+    let visible = visible_lines(layout.lines.clone());
+
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0].to_string(), "• Gain is $x^2+y^2$ now.");
+    assert_eq!(
+        layout.placements,
+        vec![crate::media::MediaPlacementRequest {
+            node: crate::media::MediaNode::Latex {
+                source: "x^2+y^2".to_string(),
+                display: false,
+                ordinal: 0,
+            },
+            rect: Rect::new(
+                /*x*/ 10, /*y*/ 0, /*width*/ 9, /*height*/ 1
+            ),
+        }]
+    );
+    insta::assert_snapshot!(
+        format!(
+            "visible:\n{}\n\nplacements:\n{:#?}",
+            visible[0], layout.placements
+        ),
+        @r###"
+    visible:
+    • Gain is $x^2+y^2$ now.
+
+    placements:
+    [
+        MediaPlacementRequest {
+            node: Latex {
+                source: "x^2+y^2",
+                display: false,
+                ordinal: 0,
+            },
+            rect: Rect {
+                x: 10,
+                y: 0,
+                width: 9,
+                height: 1,
+            },
+        },
+    ]
+    "###
+    );
+}
+
+#[test]
+fn finalized_markdown_without_media_capability_keeps_raw_latex_only() {
+    let source = "Inline $x^2$ and block:\n\n$$\\int_0^1 x\\,dx$$";
+    let cell = AgentMarkdownCell::new(source.to_string(), Path::new("/tmp"));
+
+    let layout = cell.display_media_layout(/*width*/ 48, /*image_placeholder_rows*/ None);
+    let visible_text = visible_lines(layout.lines)
+        .iter()
+        .map(Line::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(layout.placements.is_empty());
+    assert!(visible_text.contains("$x^2$"));
+    assert!(visible_text.contains("$$\\int_0^1 x\\,dx$$"));
+    assert_eq!(cell.raw_lines(), raw_lines_from_source(source));
+}
+
+#[test]
 fn invalid_image_source_keeps_text_fallback_in_media_layout() {
     let source = "![internal](http://127.0.0.1/private.png)";
     let cell = AgentMarkdownCell::new(source.to_string(), Path::new("/tmp"));

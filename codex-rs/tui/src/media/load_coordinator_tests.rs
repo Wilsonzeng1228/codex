@@ -68,6 +68,22 @@ fn https_request(cell_id: u64, ordinal: usize, source: &str) -> AnchoredMediaPla
     )
 }
 
+fn latex_request(cell_id: u64, ordinal: usize, source: &str) -> AnchoredMediaPlacementRequest {
+    AnchoredMediaPlacementRequest::new(
+        MediaCellId::new(cell_id).expect("non-zero cell id"),
+        MediaPlacementRequest {
+            node: MediaNode::Latex {
+                source: source.to_string(),
+                display: true,
+                ordinal,
+            },
+            rect: Rect::new(
+                /*x*/ 0, /*y*/ 0, /*width*/ 30, /*height*/ 3,
+            ),
+        },
+    )
+}
+
 fn unused_local_loader() -> Arc<LocalImageLoadFn> {
     Arc::new(move |_path: PathBuf| -> LocalImageLoadFuture {
         Box::pin(async move { panic!("remote-only test must not start the local loader") })
@@ -398,6 +414,38 @@ async fn completed_history_load_requests_frame_and_reflow() {
         }
     );
     assert!(coordinator.ready_image(&placement).is_some());
+}
+
+#[tokio::test]
+async fn completed_latex_render_requests_frame_and_becomes_ready() {
+    let mut registry = MediaPlacementRegistry::default();
+    let update = registry.replace_active(vec![latex_request(
+        /*cell_id*/ 31,
+        /*ordinal*/ 0,
+        "\\frac{1}{s+1}",
+    )]);
+    let placement = update.placed[0].clone();
+    let (frame_requester, mut frame_rx) = FrameRequester::test_channel();
+    let mut coordinator = MediaLoadCoordinator::new(frame_requester);
+
+    coordinator.reconcile(&update, MediaPlacementDomain::Active);
+    timeout(Duration::from_secs(2), frame_rx.recv())
+        .await
+        .expect("completed LaTeX render should request a frame")
+        .expect("frame requester should remain connected");
+
+    assert_eq!(
+        coordinator.poll_completed(),
+        MediaLoadCompletion {
+            active_ready: true,
+            history_ready: false,
+        }
+    );
+    let image = coordinator
+        .ready_image(&placement)
+        .expect("rendered LaTeX should become ready");
+    assert!(image.bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert!(!image.can_use_source_file);
 }
 
 #[tokio::test]

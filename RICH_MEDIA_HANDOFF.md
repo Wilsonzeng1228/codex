@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
 > 更新时间：2026-08-24
-> 当前状态：Phase 1、Phase 2 已完成，准备开始 Phase 3 LaTeX。Windows WezTerm 已通过本地 PNG/JPEG/WebP/GIF 静态首帧、公网 HTTPS、TUN Fake-IP fallback、finalized history、后续普通消息保留、滚动、resize/reflow、任务切换、`/clear` 与退出 retirement 的真实视觉验收；私网 HTTPS 和无协议能力均保持文本降级。图片 I/O 已具备有界读取、完整解码、缩放、内存 LRU、TUI 异步协调、同源去重和逐跳安全下载策略；Sixel 与 Kitty Unicode placeholders 仍为后续可选扩展，LaTeX 尚未开始。
+> 当前状态：Phase 1、Phase 2、Phase 3 已完成，下一步进入 Phase 4 交互与回归。Windows WezTerm 已通过本地 PNG/JPEG/WebP/GIF 静态首帧、公网 HTTPS、TUN Fake-IP fallback、finalized history、后续普通消息保留、滚动、resize/reflow、任务切换、`/clear` 与退出 retirement 的真实视觉验收；私网 HTTPS 和无协议能力均保持文本降级。LaTeX 已接入 `$...$`/`$$...$$` 解析、RaTeX 进程内透明 PNG 渲染、异步协调、主题/宽度缓存键、资源限制和原文回退，自动化验收与渲染 PNG 人工检查已完成；真实 WezTerm 公式交互矩阵按总体规划留到 Phase 4。Sixel 与 Kitty Unicode placeholders 仍为后续可选扩展。
 
 ## 新对话启动指令
 
@@ -27,7 +27,7 @@
 - 工作仓库：`D:\hermes\agent-repl\codex-rich`
 - 当前分支：`codex/rich-media`
 - 官方基线：`d44696065723a56b9de6538cd6348fcbe6c1542e`
-- 本轮继续开发前 HEAD：`1d059b5124ebac47814e2ce27178d98a957ed7d5 feat: 增加远程图片生产 DNS 解析器`
+- 本轮继续开发前 HEAD：`d9f005366fb3bf9e63ba9101817f960c1e789a27 fix: 兼容 TUN 代理并保留 HTTPS 历史图片`
 - 远程仓库只有：`upstream https://github.com/openai/codex.git`
 - 尚无 `origin`：用户还没有提供 fork 地址，不要自行猜测或推送。
 - 父目录的 `D:\hermes\agent-repl\graphify-out` 是未完成的旁路分析产物，没有可查询的 `graph.json`，不属于本仓库，不要加入提交。
@@ -35,6 +35,8 @@
 最近的实现提交（不含本轮待提交变更）：
 
 ```text
+d9f005366f fix: 兼容 TUN 代理并保留 HTTPS 历史图片
+f63b79d547 feat: 接入 HTTPS 聊天图片显示
 1d059b5124 feat: 增加远程图片生产 DNS 解析器
 048055686a feat: 绑定 HTTPS 图片到已验证地址
 34c4f1669c feat: 建立 HTTPS 图片安全下载边界
@@ -148,6 +150,14 @@ resolver 本身仍只做纯解析，不访问文件和网络。新的远程策�
 - `RemoteImageLoader::production()` 明确组合 Fake-IP-aware production resolver、pinned adapter 和默认资源限制。
 - `MediaLoadCoordinator::new()` 现在组合本地 loader 与 production `RemoteImageLoader`，本地和远程来源共享 semaphore、waiter、completion channel 与 generation retirement。远程 Ready 结果由 iTerm2/Kitty direct-data writer 发送准备后的 PNG；即使协议为 Kitty local-file，HTTPS 也永远不能使用 `t=f` 路径引用。
 
+### 3.9 LaTeX 解析、异步渲染与透明覆盖
+
+- `media/latex.rs` 使用 `pulldown-cmark 0.13` 的 `ENABLE_MATH` 事件识别 `$...$` 与 `$$...$$`，把公式改写为每次解析随机生成的私有 Markdown 媒体目标，再复用既有布局器；用户手写的 `codex-latex:*` 图片目标不能冒充内部公式。代码块、行内代码、转义美元、普通价格文本和消息结束时未闭合的公式保持原文。
+- `media/latex_renderer.rs` 采用可嵌入、跨平台且不依赖完整 TeX 发行版的 RaTeX `0.1.14`。解析、布局与透明 PNG 生成放入 `spawn_blocking`，设置 5 秒超时、4 KiB 源码、4096 单边、8,388,608 像素和 16 MiB 输出限制；内存 LRU 为 64 项/32 MiB，键包含公式源、行内/块级模式、终端列宽和前景色。
+- `MediaLoadCoordinator` 将图片和公式统一为有界并发 2 的异步加载项，复用 waiter、generation、完成通知和 active/history reflow。公式失败或超限时状态为 `Unavailable`，显示的仍是带定界符原始公式，不会阻塞 TUI。
+- 块公式占用配置的媒体行数，行内公式固定为一行且后续文本留在同一行；原始 Markdown、复制文本和持久化 source 不被改写。透明公式 Ready 后，active writer 先清理对应 cell，history 写入路径只遮罩 placement 覆盖范围，再发送既有 iTerm2/Kitty direct-data PNG，避免透明背景下原始公式透出。
+- RaTeX 的 MIT 声明以及嵌入 KaTeX 字体的 SIL OFL 1.1 文本已加入 `NOTICE` 与 `third_party/ratex/`；Cargo 与 Bazel 依赖锁同步刷新。
+
 ## 4. 当前架构判断
 
 这是下一阶段最重要的约束：
@@ -169,6 +179,9 @@ resolver 本身仍只做纯解析，不访问文件和网络。新的远程策�
 - `codex-rs/tui/src/media/image_tests.rs`
 - `codex-rs/tui/src/media/local_loader.rs`
 - `codex-rs/tui/src/media/local_loader_tests.rs`
+- `codex-rs/tui/src/media/latex.rs`
+- `codex-rs/tui/src/media/latex_renderer.rs`
+- `codex-rs/tui/src/media/latex_renderer_tests.rs`
 - `codex-rs/tui/src/media/load_coordinator.rs`
 - `codex-rs/tui/src/media/load_coordinator_tests.rs`
 - `codex-rs/tui/src/media/terminal_writer.rs`
@@ -359,6 +372,16 @@ just test -p codex-tui finalized_markdown_media_layout_reserves_rows_at_each_ima
 - 最终视觉日志保存在仓库外 `C:\Users\Wilsonzeng\.codex\artifacts\rich-media-smoke\2026-08-24\phase2-https-follow-up-fix\codex-tui.log`。用户已明确确认公网图片、后续消息保留、私网拒绝、滚动与 resize 的全部现象符合预期，Phase 2 视觉判据关闭。
 - 收尾 `just fix -p codex-tui` 退出码 0，仅有两条既有 pets `expect()` warning；`just fmt` 仍因 Windows 缺少 `tools/buildifier` 报 `[WinError 2]`，随后 `cargo fmt --all -- --check` 退出码 0，仅有 stable Rust 不支持 `imports_granularity=Item` 的提示。按纪律未在 fix/fmt 后重跑测试。最终 target 为 12.88 GiB，低于 18 GiB 停止线。
 
+2026-08-24 Phase 3 LaTeX：
+
+- 解析 RED 先因 `MediaNode::Latex` 不存在而无法编译；renderer RED 先因缺少 `LatexRenderer`/request/error 接口而失败；coordinator RED 先超时，writer RED 证明公式 placement 被跳过。后续安全审计的 RED 又复现用户手写内部样式目标被误认成公式，以及透明 PNG 下原文未清理的问题；均以最小实现转为 GREEN。
+- `just test -p codex-tui latex` 最终 12/12 通过，覆盖图片与公式源码顺序、代码/转义美元/价格/未闭合边界、随机私有目标、块级与行内布局、原文回退、透明 PNG、主题/宽度缓存键、4 KiB 上限、非法 `includegraphics`、异步完成、active cell 清理和 history 精确遮罩。行内布局另有 insta snapshot。
+- 常用工科样例集覆盖二阶系统传递函数、DTFT、矩阵、分段函数、傅里叶积分和中文闭环传递函数。仓库外 release 尖峰二进制为 5.23 MiB；包含首次中文字体发现的冷批次约 2492 ms，简单公式热渲染约 41 ms；六张透明 PNG 已人工查看，字形与中文 fallback 正常。
+- 完整 `just test -p codex-tui` 共运行 3798 项，3796 项通过、2 项失败、10 项跳过。失败仍是既有项目权限历史测试（得到 `../trusted`）和 pets Kitty local-file 测试（输出包含 `cG5n`），没有新增失败。
+- 依赖变更先因环境没有 `bazel` 使 `just bazel-lock-update` 无法启动，随后使用仓库 CI 固定的 Bazelisk `1.28.1` 与 `.bazelversion` 的 Bazel `9.0.0` 成功执行 `bazel mod deps --lockfile_mode=update`，`MODULE.bazel.lock` 增加对应条目。
+- `just fix -p codex-tui` 退出码 0，Clippy 只对本轮 Markdown 布局做两处等价机械修正，仍仅保留未修改 `pets/mod.rs` 的两条既有 `expect_used` warning。`just fmt` 仍因 Windows 缺少 `tools/buildifier` 报 `[WinError 2]`；随后 `cargo fmt --all -- --check` 退出码 0，仅有 stable Rust 不支持 `imports_granularity=Item` 的提示。按纪律未在 fix/fmt 后重跑测试，最终 target 约 10.93 GiB。
+- 渲染尖峰和 PNG 证据位于仓库外 `D:\hermes\agent-repl\rich-media-smoke-evidence\phase3-ratex-spike`，不进入提交。真实 WezTerm 中公式的滚动、resize、任务切换和复制矩阵属于总体规划 Phase 4，不在本阶段冒充已验收。
+
 ## 7. Windows 构建环境
 
 全局代理指向失效的 `127.0.0.1:7892`。所有需要 Cargo/just 网络访问的命令应只在当前 PowerShell 会话设置以下覆盖，不要修改用户的全局 Git 或代理配置：
@@ -439,16 +462,20 @@ Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、re
 - TUI production owner 构造 production 远程 loader，远程完成会触发下一帧，history 完成复用既有 source-backed bounded reflow；
 - iTerm2 和 Kitty writer 可消费远程 Ready PNG；Kitty local-file 对 HTTPS 强制发送 `t=d` 准备字节，不允许路径引用。
 
-真实 Windows WezTerm HTTPS 复验已经关闭：公网图片显示、后续普通消息保留、私网拒绝、滚动/resize 无残影，以及 runtime Fake-IP fallback、remote Pending→Ready 和 history reflow 均有证据。Phase 2 至此完成；下一最小单元按总体规划进入 Phase 3 LaTeX，先冻结排版后端与最小块公式边界，不要重做图片 smoke，也不要同时扩展 Sixel、Kitty Unicode placeholders、磁盘缓存或用户配置。
+真实 Windows WezTerm HTTPS 复验已经关闭：公网图片显示、后续普通消息保留、私网拒绝、滚动/resize 无残影，以及 runtime Fake-IP fallback、remote Pending→Ready 和 history reflow 均有证据。Phase 2 至此完成。
+
+### 8.5 已完成 LaTeX 渲染
+
+Phase 3 已选择 RaTeX `0.1.14` 并完成行内/块级公式、流式未闭合边界、主题/宽度缓存键、透明 PNG、异步协调、资源限制、原文回退和常用工科样例集。自动化判据与 renderer PNG 检查已关闭；下一最小单元按总体规划进入 Phase 4，处理交互状态、开关、复制/会话回归和真实终端矩阵。不要重做 Phase 1/2 图片 smoke 或 Phase 3 后端尖峰，也不要同时扩展 Sixel、Kitty Unicode placeholders 或磁盘缓存。
 
 ## 9. 尚未完成
 
 - active streaming 瞬间没有单独截图，当前可靠证据集中在 finalized history、滚动、resize/reflow、退出 retirement 与文本降级；
 - 缓存尚无用户清理命令或磁盘层；
 - Sixel 编码仍留在 pets 专用实现，尚未完全移入通用媒体层；
-- 媒体节点尚未记录源字节范围；
-- LaTeX 渲染尚未开始；
-- 富媒体交互、配置开关、文档、最终打包尚未开始。
+- 媒体节点尚未把公式/图片的源字节范围暴露为公共模型字段；
+- LaTeX 的真实 WezTerm 交互矩阵尚未执行；
+- 富媒体交互、配置开关、用户文档、最终打包尚未开始。
 
 阶段状态：
 
@@ -457,7 +484,7 @@ Windows WezTerm Phase 1 smoke 已完成：finalized history 图片、滚动、re
 | Phase 0：基线与架构勘察 | 已完成 |
 | Phase 1：图片语法、协议、节点与布局 | 已完成 |
 | Phase 2：本地/远程图片 I/O 与缓存 | 已完成 |
-| Phase 3：LaTeX | 准备开始 |
+| Phase 3：LaTeX | 已完成 |
 | Phase 4：交互与配置 | 待开始 |
 | Phase 5：文档、技能与验收 | 待开始 |
 | Phase 6：打包/交付 | 待开始 |
@@ -478,7 +505,7 @@ Windows 下 `git status --short` 当前会显示：
 - TUI 测试优先 `just test -p codex-tui <filter>`；
 - 新行为必须先写失败测试，确认 RED 后做最小实现并确认 GREEN；
 - 本轮所有文件完成后统一提交，禁止 `git add .`；
-- 本轮提交信息：`fix: 兼容 TUN 代理并保留 HTTPS 历史图片`。
+- 本轮提交信息：`feat: 支持聊天 LaTeX 公式渲染`。
 
 ## 11. 新对话的起手命令
 
@@ -502,7 +529,7 @@ Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\app\resize_reflow.rs
 Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\tui.rs
 ```
 
-不要重做已经通过的 Windows WezTerm 本地/HTTPS 图片 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、普通后续消息保留、滚动/resize、真实 `/resume` 任务切换、空闲 `/clear` retirement、本地异步 TUI 集成、PNG/JPEG/WebP/GIF 静态首帧、HTTPS 安全策略、Fake-IP DoH fallback、production DNS resolver、pinned HTTP adapter 或远程 coordinator/writer 自动测试。下一轮从 Phase 3 LaTeX 的后端决策与最小块公式单元开始。
+不要重做已经通过的 Windows WezTerm 本地/HTTPS 图片 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、普通后续消息保留、滚动/resize、真实 `/resume` 任务切换、空闲 `/clear` retirement、本地异步 TUI 集成、PNG/JPEG/WebP/GIF 静态首帧、HTTPS 安全策略、Fake-IP DoH fallback、production DNS resolver、pinned HTTP adapter、远程 coordinator/writer 自动测试、RaTeX 后端尖峰、LaTeX 解析/缓存/透明覆盖或工科样例集。下一轮从 Phase 4 交互状态与真实终端公式矩阵开始。
 
 ## 12. Phase 1 完成判据
 

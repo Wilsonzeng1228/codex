@@ -40,11 +40,13 @@
 //! key/value records.
 
 use crate::markdown_text_merge::DecodedTextMerge;
+use crate::media::LatexSpec;
 use crate::media::MediaLayout;
 use crate::media::MediaNode;
 use crate::media::MediaPlaceholderRows;
 use crate::media::MediaPlacementRequest;
 use crate::media::resolve_image_source;
+use crate::media::rewrite_latex;
 use crate::render::highlight::foreground_style_for_scopes;
 use crate::render::highlight::highlight_code_to_lines;
 use crate::render::line_utils::line_to_static;
@@ -379,17 +381,21 @@ fn render_markdown_layout_with_width_cwd_and_hidden_link_destinations(
     is_hidden_link_destination: &dyn Fn(&str) -> bool,
     image_placeholder_rows: Option<MediaPlaceholderRows>,
 ) -> MediaLayout {
+    let latex_rewrite = rewrite_latex(input);
+    let rendered_input = latex_rewrite.markdown.as_str();
+    let latex_specs = latex_rewrite.specs.as_slice();
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
-    let parser = DecodedTextMerge::new(Parser::new_ext(input, options).into_offset_iter());
+    let parser = DecodedTextMerge::new(Parser::new_ext(rendered_input, options).into_offset_iter());
     let mut w = Writer::new(
-        input,
+        rendered_input,
         parser,
         width,
         cwd,
         is_hidden_link_destination,
         image_placeholder_rows,
+        latex_specs,
     );
     w.run();
     MediaLayout {
@@ -417,6 +423,7 @@ struct ImageState {
     alt: String,
     ordinal: usize,
     use_placeholder: bool,
+    latex: Option<LatexSpec>,
 }
 
 fn should_render_link_destination(dest_url: &str) -> bool {
@@ -462,6 +469,7 @@ where
     image_placeholder_rows: Option<MediaPlaceholderRows>,
     media_placements: Vec<MediaPlacementRequest>,
     next_image_ordinal: usize,
+    latex_specs: &'a [LatexSpec],
     needs_newline: bool,
     pending_marker_line: bool,
     in_paragraph: bool,
@@ -492,6 +500,7 @@ where
         cwd: Option<&Path>,
         is_hidden_link_destination: &'policy dyn Fn(&str) -> bool,
         image_placeholder_rows: Option<MediaPlaceholderRows>,
+        latex_specs: &'a [LatexSpec],
     ) -> Self {
         Self {
             input,
@@ -508,6 +517,7 @@ where
             image_placeholder_rows,
             media_placements: Vec::new(),
             next_image_ordinal: 0,
+            latex_specs,
             needs_newline: false,
             pending_marker_line: false,
             in_paragraph: false,
@@ -1885,15 +1895,25 @@ where
     }
 
     fn start_image(&mut self, destination: String) {
-        let source_error = resolve_image_source(&destination)
-            .err()
-            .map(|error| error.to_string());
+        let latex = self
+            .latex_specs
+            .iter()
+            .find(|spec| spec.destination == destination)
+            .cloned();
+        let source_error = if latex.is_some() {
+            None
+        } else {
+            resolve_image_source(&destination)
+                .err()
+                .map(|error| error.to_string())
+        };
         let ordinal = self.next_image_ordinal;
         self.next_image_ordinal += 1;
         let use_placeholder = self.image_placeholder_rows.is_some()
             && source_error.is_none()
             && !self.in_table_cell();
         if use_placeholder
+            && latex.as_ref().is_none_or(|spec| spec.display)
             && self
                 .current_line_content
                 .as_ref()
@@ -1907,6 +1927,7 @@ where
             alt: String::new(),
             ordinal,
             use_placeholder,
+            latex,
         });
         if !use_placeholder {
             self.push_image_fallback_span("[image: ".into());
@@ -1917,6 +1938,11 @@ where
         let Some(image) = self.image.take() else {
             return;
         };
+
+        if let Some(latex) = image.latex {
+            self.end_latex(image.ordinal, latex, image.use_placeholder);
+            return;
+        }
 
         if image.use_placeholder
             && let Some(image_placeholder_rows) = self.image_placeholder_rows
@@ -1970,6 +1996,83 @@ where
                 Style::new().dark_gray(),
             ));
         }
+    }
+
+    fn end_latex(&mut self, ordinal: usize, latex: LatexSpec, use_placeholder: bool) {
+        if !use_placeholder {
+            self.push_image_fallback_span(latex.full_source.into());
+            return;
+        }
+
+        let Some(wrap_width) = self.wrap_width else {
+            self.push_image_fallback_span(latex.full_source.into());
+            return;
+        };
+        if self.current_line_content.is_none() {
+            self.push_line(Line::default());
+        }
+
+        let prefix_width = Self::spans_display_width(&self.current_initial_indent);
+        let current_width = self
+            .current_line_content
+            .as_ref()
+            .map(super::terminal_hyperlinks::HyperlinkLine::width)
+            .unwrap_or_default();
+        let delimiter_width = if latex.display { 4 } else { 2 };
+        let formula_width = display_width(&latex.source).saturating_add(delimiter_width);
+
+        if !latex.display && prefix_width + current_width + formula_width > wrap_width {
+            self.push_line(Line::default());
+        }
+
+        let prefix_width = Self::spans_display_width(&self.current_initial_indent);
+        let current_width = self
+            .current_line_content
+            .as_ref()
+            .map(super::terminal_hyperlinks::HyperlinkLine::width)
+            .unwrap_or_default();
+        let x = prefix_width + current_width;
+        let available_width = wrap_width.saturating_sub(x);
+        let rows = if latex.display {
+            self.image_placeholder_rows
+                .map(MediaPlaceholderRows::get)
+                .unwrap_or(1)
+        } else {
+            1
+        };
+
+        if formula_width == 0
+            || formula_width > available_width.saturating_mul(usize::from(rows))
+            || (!latex.display && formula_width > available_width)
+        {
+            self.push_image_fallback_span(latex.full_source.into());
+            return;
+        }
+
+        let row = self.text.len();
+        self.push_image_fallback_span(latex.full_source.into());
+        if latex.display {
+            for _ in 1..rows {
+                self.push_line(Line::default());
+            }
+            self.flush_current_line();
+        }
+
+        let x = u16::try_from(x).unwrap_or(u16::MAX);
+        let y = u16::try_from(row).unwrap_or(u16::MAX);
+        let width = if latex.display {
+            u16::try_from(available_width).unwrap_or(u16::MAX)
+        } else {
+            u16::try_from(formula_width).unwrap_or(u16::MAX)
+        };
+        self.media_placements.push(MediaPlacementRequest {
+            node: MediaNode::Latex {
+                source: latex.source,
+                display: latex.display,
+                ordinal,
+            },
+            rect: ratatui::layout::Rect::new(x, y, width, rows),
+        });
     }
 
     fn push_image_fallback_span(&mut self, span: Span<'static>) {
@@ -2666,6 +2769,7 @@ mod tests {
             /*cwd*/ None,
             &never_hide_link_destination,
             /*image_placeholder_rows*/ None,
+            /*latex_specs*/ &[],
         );
         let wrapped = writer.wrap_cell(&cell, /*width*/ 40);
         let rendered = wrapped
