@@ -74,7 +74,7 @@ codex-rich
 
 `on`/`off` 只影响当前会话，不写配置。`clear-cache` 清空本地图片与 LaTeX 的内存 LRU，使当前 placement 重新加载；HTTPS 图片没有独立磁盘缓存，因此会重新下载。
 
-`status` 还会显示最近一次本地图片、远程图片或 LaTeX 渲染错误；没有记录时显示 `none`。执行 `clear-cache` 会清除旧错误，若重新加载仍失败则记录新的错误。
+`status` 会显示启动时探测到的终端标识，以及最近一次本地图片、远程图片或 LaTeX 渲染错误；没有错误记录时显示 `none`。执行 `clear-cache` 会清除旧错误，若重新加载仍失败则记录新的错误。
 
 ## 支持与安全边界
 
@@ -86,7 +86,7 @@ codex-rich
 
 ## 故障排查
 
-1. 运行 `/rich-media status`，确认状态、协议、占位行数和最近一次渲染错误。
+1. 运行 `/rich-media status`，确认终端标识、状态、协议、占位行数和最近一次渲染错误。
 2. 状态为 `unavailable` 时，先确认使用 WezTerm/Kitty 且没有 tmux/Zellij 中间层；必要时用诊断 override 做一次对照。
 3. 图像仍旧时运行 `/rich-media clear-cache`。
 4. 远程图失败时确认地址为公开 HTTPS，且响应不是重定向到私网或超出限制。

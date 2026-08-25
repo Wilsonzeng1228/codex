@@ -61,6 +61,7 @@ fn rich_media_status_cell(
     let last_error = status.last_error.unwrap_or("none");
     let mut lines: Vec<Line<'static>> = vec![
         vec!["• ".dim(), format!("Rich media: {state}").into()].into(),
+        format!("  Terminal: {}", status.terminal).into(),
         format!("  Protocol: {protocol}").into(),
         format!("  Placeholder rows: {placeholder_rows}").into(),
         "  LaTeX renderer: RaTeX (ready)".into(),

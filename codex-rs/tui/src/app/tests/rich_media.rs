@@ -101,6 +101,7 @@ async fn rich_media_status_card_reports_runtime_policy() -> Result<()> {
         crate::media::ImageProtocol::Iterm2Inline,
         placeholder_rows,
     );
+    tui.set_chat_media_terminal_for_test("WezTerm/20240203");
 
     app.apply_rich_media_action(&mut tui, RichMediaAction::Status)?;
 
@@ -112,6 +113,7 @@ async fn rich_media_status_card_reports_runtime_policy() -> Result<()> {
         .expect("status command should append one history cell");
     insta::assert_snapshot!(rendered_cell_text(status.as_ref()), @r###"
 • Rich media: on
+  Terminal: WezTerm/20240203
   Protocol: iTerm2 inline
   Placeholder rows: 4
   LaTeX renderer: RaTeX (ready)

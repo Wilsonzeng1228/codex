@@ -589,6 +589,7 @@ pub struct Tui {
     chat_media_rows_forced_by_env: bool,
     chat_media_placeholder_rows: Option<crate::media::MediaPlaceholderRows>,
     chat_media_protocol: Option<crate::media::ImageProtocol>,
+    chat_media_terminal: String,
     media_placements: crate::media::MediaPlacementRegistry,
     media_loads: crate::media::MediaLoadCoordinator,
     screen_size: ScreenSizePolicy,
@@ -655,6 +656,7 @@ impl Tui {
         let chat_media_forced_by_env = chat_media_capability.is_some();
         let chat_media_rows_forced_by_env =
             std::env::var_os("CODEX_TUI_MEDIA_PLACEHOLDER_ROWS").is_some();
+        let chat_media_terminal = codex_terminal_detection::user_agent();
         let media_loads = crate::media::MediaLoadCoordinator::new(frame_requester.clone());
 
         Self {
@@ -669,6 +671,7 @@ impl Tui {
             chat_media_placeholder_rows: chat_media_capability
                 .map(|capability| capability.placeholder_rows),
             chat_media_protocol: chat_media_capability.map(|capability| capability.protocol),
+            chat_media_terminal,
             media_placements: crate::media::MediaPlacementRegistry::default(),
             media_loads,
             screen_size: ScreenSizePolicy::default(),
@@ -986,6 +989,7 @@ impl Tui {
         crate::media::ChatMediaRuntimeStatus {
             enabled: self.chat_media_protocol.is_some(),
             available: self.chat_media_available_capability,
+            terminal: &self.chat_media_terminal,
             last_error: self.media_loads.last_error(),
         }
     }
@@ -1108,6 +1112,11 @@ impl Tui {
             protocol,
             placeholder_rows: image_placeholder_rows,
         });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_chat_media_terminal_for_test(&mut self, terminal: &str) {
+        terminal.clone_into(&mut self.chat_media_terminal);
     }
 
     #[cfg(test)]

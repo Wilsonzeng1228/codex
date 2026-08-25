@@ -19,6 +19,7 @@ pub(crate) struct ChatMediaCapability {
 pub(crate) struct ChatMediaRuntimeStatus<'a> {
     pub(crate) enabled: bool,
     pub(crate) available: Option<ChatMediaCapability>,
+    pub(crate) terminal: &'a str,
     pub(crate) last_error: Option<&'a str>,
 }
 
