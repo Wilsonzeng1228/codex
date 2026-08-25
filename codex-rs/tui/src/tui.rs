@@ -1013,6 +1013,12 @@ impl Tui {
         }
     }
 
+    pub(crate) fn clear_chat_media_cache(&mut self) -> usize {
+        let reloaded_sources = self.media_loads.clear_cache();
+        self.frame_requester().schedule_frame();
+        reloaded_sources
+    }
+
     /// Change the session-local rich-media state without persisting configuration.
     ///
     /// Retirement must run while the old protocol is still active so Kitty placements receive

@@ -114,7 +114,22 @@ async fn rich_media_status_card_reports_runtime_policy() -> Result<()> {
   Placeholder rows: 4
   LaTeX renderer: RaTeX (ready)
   Remote images: HTTPS public addresses only
-  Runtime command: /rich-media [status|on|off]
+  Runtime command: /rich-media [status|on|off|clear-cache]
 "###);
+    Ok(())
+}
+
+#[tokio::test]
+async fn clearing_rich_media_cache_reports_reloaded_source_count() -> Result<()> {
+    let (mut app, _events, _ops) = make_test_app_with_channels().await;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+
+    app.apply_rich_media_action(&mut tui, RichMediaAction::ClearCache)?;
+
+    let status = app
+        .transcript_cells
+        .last()
+        .expect("clear-cache command should append one history cell");
+    assert!(rendered_cell_text(status.as_ref()).contains("Reloaded active sources: 0"));
     Ok(())
 }

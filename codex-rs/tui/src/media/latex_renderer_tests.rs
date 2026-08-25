@@ -56,6 +56,9 @@ async fn renders_formula_to_transparent_png_and_reuses_bounded_cache() {
         .await
         .expect("terminal foreground participates in cache key");
     assert_eq!(renderer.cache_len_for_test(), 3);
+
+    renderer.clear_cache();
+    assert_eq!(renderer.cache_len_for_test(), 0);
 }
 
 #[tokio::test]

@@ -2160,7 +2160,7 @@ async fn slash_rich_media_requests_runtime_status() {
 }
 
 #[tokio::test]
-async fn slash_rich_media_accepts_on_and_off_arguments() {
+async fn slash_rich_media_accepts_runtime_arguments() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
     chat.dispatch_command_with_args(SlashCommand::RichMedia, "on".to_string(), Vec::new());
@@ -2176,6 +2176,18 @@ async fn slash_rich_media_accepts_on_and_off_arguments() {
         rx.try_recv(),
         Ok(AppEvent::RichMedia {
             action: crate::app_event::RichMediaAction::Disable,
+        })
+    );
+
+    chat.dispatch_command_with_args(
+        SlashCommand::RichMedia,
+        "clear-cache".to_string(),
+        Vec::new(),
+    );
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::RichMedia {
+            action: crate::app_event::RichMediaAction::ClearCache,
         })
     );
 }

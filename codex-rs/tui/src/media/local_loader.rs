@@ -209,6 +209,10 @@ impl LocalImageLoader {
         }
     }
 
+    pub(crate) fn clear_cache(&self) {
+        *cache_lock(&self.cache) = LocalImageCache::default();
+    }
+
     /// Load a supported local image and prepare a static PNG without blocking the executor thread.
     pub(crate) async fn load_image(
         &self,

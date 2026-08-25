@@ -36,7 +36,7 @@ const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str =
     "Press Ctrl+C to return to the main thread first.";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
 const RAW_USAGE: &str = "Usage: /raw [on|off]";
-const RICH_MEDIA_USAGE: &str = "Usage: /rich-media [status|on|off]";
+const RICH_MEDIA_USAGE: &str = "Usage: /rich-media [status|on|off|clear-cache]";
 const USAGE_CHATGPT_LOGIN_REQUIRED: &str = "Sign in with ChatGPT to use /usage.";
 
 impl ChatWidget {
@@ -764,6 +764,7 @@ impl ChatWidget {
                     "status" => crate::app_event::RichMediaAction::Status,
                     "on" => crate::app_event::RichMediaAction::Enable,
                     "off" => crate::app_event::RichMediaAction::Disable,
+                    "clear-cache" => crate::app_event::RichMediaAction::ClearCache,
                     _ => {
                         self.add_error_message(RICH_MEDIA_USAGE.to_string());
                         return;

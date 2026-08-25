@@ -91,6 +91,59 @@ fn unused_local_loader() -> Arc<LocalImageLoadFn> {
 }
 
 #[tokio::test]
+async fn clear_cache_restarts_live_sources() {
+    let dir = tempfile::tempdir().expect("temporary image directory");
+    let starts = Arc::new(AtomicUsize::new(0));
+    let loader = {
+        let starts = Arc::clone(&starts);
+        Arc::new(move |_path: PathBuf| -> LocalImageLoadFuture {
+            let starts = Arc::clone(&starts);
+            Box::pin(async move {
+                starts.fetch_add(1, Ordering::SeqCst);
+                Ok(loaded_image())
+            })
+        })
+    };
+    let mut registry = MediaPlacementRegistry::default();
+    let update = registry.replace_active(vec![local_request(
+        /*cell_id*/ 9,
+        /*ordinal*/ 0,
+        dir.path().join("diagram.png"),
+    )]);
+    let placement = update.placed[0].clone();
+    let (frame_requester, mut frame_rx) = FrameRequester::test_channel();
+    let mut coordinator =
+        MediaLoadCoordinator::with_loader(frame_requester, /*max_concurrent*/ 1, loader);
+    coordinator.reconcile(&update, MediaPlacementDomain::Active);
+
+    timeout(Duration::from_secs(1), frame_rx.recv())
+        .await
+        .expect("first load should request a frame")
+        .expect("frame requester should remain connected");
+    coordinator.poll_completed();
+    assert!(matches!(
+        coordinator.image_state(&placement),
+        MediaImageState::Ready(_)
+    ));
+
+    assert_eq!(coordinator.clear_cache(), 1);
+    assert_eq!(
+        coordinator.image_state(&placement),
+        MediaImageState::Pending
+    );
+    timeout(Duration::from_secs(1), frame_rx.recv())
+        .await
+        .expect("reloaded source should request a frame")
+        .expect("frame requester should remain connected");
+    coordinator.poll_completed();
+    assert_eq!(starts.load(Ordering::SeqCst), 2);
+    assert!(matches!(
+        coordinator.image_state(&placement),
+        MediaImageState::Ready(_)
+    ));
+}
+
+#[tokio::test]
 async fn duplicate_https_sources_share_one_in_flight_load_and_become_ready() {
     let starts = Arc::new(AtomicUsize::new(0));
     let release = Arc::new(Notify::new());

@@ -95,6 +95,13 @@ async fn local_png_loader_decodes_resizes_and_reuses_cached_result() {
     assert_eq!((first.width, first.height), (2, 1));
     assert!(first.bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
     assert!(Arc::ptr_eq(&first.bytes, &cached.bytes));
+
+    loader.clear_cache();
+    let reloaded = loader
+        .load_image(&path, render_params())
+        .await
+        .expect("reload local PNG after clearing cache");
+    assert!(!Arc::ptr_eq(&first.bytes, &reloaded.bytes));
 }
 
 #[tokio::test]

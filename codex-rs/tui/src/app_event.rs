@@ -117,6 +117,7 @@ pub(crate) enum RichMediaAction {
     Status,
     Enable,
     Disable,
+    ClearCache,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

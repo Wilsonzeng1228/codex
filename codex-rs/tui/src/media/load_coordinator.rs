@@ -104,6 +104,7 @@ struct CompletedLoad {
 /// longer have a consumer. A generation check rejects completions queued before retirement.
 pub(crate) struct MediaLoadCoordinator {
     local_loader: Arc<LocalImageLoadFn>,
+    local_image_loader: Option<LocalImageLoader>,
     remote_loader: Arc<RemoteImageLoadFn>,
     latex_renderer: LatexRenderer,
     semaphore: Arc<Semaphore>,
@@ -118,15 +119,18 @@ pub(crate) struct MediaLoadCoordinator {
 
 impl MediaLoadCoordinator {
     pub(crate) fn new(frame_requester: FrameRequester) -> Self {
-        let loader = LocalImageLoader::new(LocalImageLimits::default());
-        let loader = Arc::new(move |path: PathBuf| -> LocalImageLoadFuture {
-            let loader = loader.clone();
-            Box::pin(async move {
-                loader
-                    .load_image(&path, LocalImageRenderParams::default())
-                    .await
+        let local_image_loader = LocalImageLoader::new(LocalImageLimits::default());
+        let loader = {
+            let local_image_loader = local_image_loader.clone();
+            Arc::new(move |path: PathBuf| -> LocalImageLoadFuture {
+                let loader = local_image_loader.clone();
+                Box::pin(async move {
+                    loader
+                        .load_image(&path, LocalImageRenderParams::default())
+                        .await
+                })
             })
-        });
+        };
         let remote_loader = RemoteImageLoader::<
             ProductionRemoteImageDnsResolver,
             PinnedRemoteImageHttpClient,
@@ -139,12 +143,14 @@ impl MediaLoadCoordinator {
                     .await
             })
         });
-        Self::with_loaders(
+        let mut coordinator = Self::with_loaders(
             frame_requester,
             DEFAULT_MAX_CONCURRENT_LOADS,
             loader,
             remote_loader,
-        )
+        );
+        coordinator.local_image_loader = Some(local_image_loader);
+        coordinator
     }
 
     #[cfg(test)]
@@ -168,6 +174,7 @@ impl MediaLoadCoordinator {
         let (completion_tx, completion_rx) = mpsc::unbounded_channel();
         Self {
             local_loader,
+            local_image_loader: None,
             remote_loader,
             latex_renderer: LatexRenderer::default(),
             semaphore: Arc::new(Semaphore::new(max_concurrent.max(1))),
@@ -231,6 +238,34 @@ impl MediaLoadCoordinator {
             }
         }
         completion
+    }
+
+    /// Clear decoded/rendered in-memory caches and restart every source with live placements.
+    pub(crate) fn clear_cache(&mut self) -> usize {
+        if let Some(loader) = &self.local_image_loader {
+            loader.clear_cache();
+        }
+        self.latex_renderer.clear_cache();
+        while self.completion_rx.try_recv().is_ok() {}
+
+        let source_keys: Vec<_> = self.sources.keys().cloned().collect();
+        for source_key in &source_keys {
+            if let Some(source) = self.sources.get_mut(source_key) {
+                if let Some(task) = source.task.take() {
+                    task.abort();
+                }
+                source.outcome = None;
+            }
+
+            self.next_generation = self.next_generation.wrapping_add(1);
+            let generation = self.next_generation;
+            let task = self.spawn_load(source_key.clone(), generation);
+            if let Some(source) = self.sources.get_mut(source_key) {
+                source.generation = generation;
+                source.task = Some(task);
+            }
+        }
+        source_keys.len()
     }
 
     pub(crate) fn image_state(&self, placement: &RegisteredMediaPlacement) -> MediaImageState {

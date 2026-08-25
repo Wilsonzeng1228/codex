@@ -148,6 +148,10 @@ pub(crate) struct LatexRenderer {
 }
 
 impl LatexRenderer {
+    pub(crate) fn clear_cache(&self) {
+        *lock_cache(&self.cache) = LatexRenderCache::default();
+    }
+
     pub(crate) async fn render(
         &self,
         request: LatexRenderRequest,

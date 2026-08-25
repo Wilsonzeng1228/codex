@@ -13,10 +13,15 @@ impl App {
         tui: &mut tui::Tui,
         action: RichMediaAction,
     ) -> Result<()> {
-        let changed = match action {
-            RichMediaAction::Status => false,
-            RichMediaAction::Enable => tui.set_chat_media_enabled(/*enabled*/ true),
-            RichMediaAction::Disable => tui.set_chat_media_enabled(/*enabled*/ false),
+        let (changed, reloaded_sources) = match action {
+            RichMediaAction::Status => (false, None),
+            RichMediaAction::Enable => {
+                (tui.set_chat_media_enabled(/*enabled*/ true), None)
+            }
+            RichMediaAction::Disable => {
+                (tui.set_chat_media_enabled(/*enabled*/ false), None)
+            }
+            RichMediaAction::ClearCache => (false, Some(tui.clear_chat_media_cache())),
         };
 
         if matches!(action, RichMediaAction::Enable | RichMediaAction::Disable) && changed {
@@ -25,7 +30,7 @@ impl App {
         }
 
         let status = tui.chat_media_runtime_status();
-        let cell = rich_media_status_cell(status, action, changed);
+        let cell = rich_media_status_cell(status, action, changed, reloaded_sources);
         self.insert_history_cell(tui, Box::new(cell));
         tui.frame_requester().schedule_frame();
         Ok(())
@@ -36,6 +41,7 @@ fn rich_media_status_cell(
     status: crate::media::ChatMediaRuntimeStatus,
     action: RichMediaAction,
     changed: bool,
+    reloaded_sources: Option<usize>,
 ) -> history_cell::PlainHistoryCell {
     let state = if status.enabled {
         "on"
@@ -58,10 +64,13 @@ fn rich_media_status_cell(
         format!("  Placeholder rows: {placeholder_rows}").into(),
         "  LaTeX renderer: RaTeX (ready)".into(),
         "  Remote images: HTTPS public addresses only".into(),
-        "  Runtime command: /rich-media [status|on|off]".into(),
+        "  Runtime command: /rich-media [status|on|off|clear-cache]".into(),
     ];
     if matches!(action, RichMediaAction::Enable) && !changed {
         lines.push("  Note: no supported terminal image protocol was detected".into());
+    }
+    if let Some(reloaded_sources) = reloaded_sources {
+        lines.push(format!("  Reloaded active sources: {reloaded_sources}").into());
     }
     history_cell::PlainHistoryCell::new(lines)
 }
