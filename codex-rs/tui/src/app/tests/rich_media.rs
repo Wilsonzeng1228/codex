@@ -2,6 +2,7 @@ use super::*;
 use crate::app_event::RichMediaAction;
 use crate::history_cell::AgentMarkdownCell;
 use crate::history_cell::HistoryCell;
+use codex_config::types::TuiRichMediaConfig;
 use pretty_assertions::assert_eq;
 use std::path::Path;
 use std::sync::Arc;
@@ -12,6 +13,57 @@ fn rendered_cell_text(cell: &dyn HistoryCell) -> String {
         .map(|line| line.to_string())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[tokio::test]
+async fn persistent_config_enables_detected_media_with_configured_rows() -> Result<()> {
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let detected_rows =
+        crate::media::MediaPlaceholderRows::try_from(4).expect("valid detected rows");
+    tui.set_chat_media_available_capability_for_test(
+        crate::media::ImageProtocol::Iterm2Inline,
+        detected_rows,
+    );
+
+    tui.apply_chat_media_config(TuiRichMediaConfig {
+        enabled: Some(true),
+        placeholder_rows: Some(6),
+    });
+
+    let status = tui.chat_media_runtime_status();
+    assert!(status.enabled);
+    assert_eq!(
+        tui.chat_media_placeholder_rows()
+            .map(crate::media::MediaPlaceholderRows::get),
+        Some(6)
+    );
+    assert_eq!(
+        status.available.map(|capability| capability.protocol),
+        Some(crate::media::ImageProtocol::Iterm2Inline)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn persistent_config_can_disable_media_without_hiding_capability() -> Result<()> {
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let detected_rows =
+        crate::media::MediaPlaceholderRows::try_from(4).expect("valid detected rows");
+    tui.set_chat_media_capability_for_test(
+        crate::media::ImageProtocol::Iterm2Inline,
+        detected_rows,
+    );
+
+    tui.apply_chat_media_config(TuiRichMediaConfig {
+        enabled: Some(false),
+        placeholder_rows: None,
+    });
+
+    let status = tui.chat_media_runtime_status();
+    assert!(!status.enabled);
+    assert!(status.available.is_some());
+    assert_eq!(tui.chat_media_placeholder_rows(), None);
+    Ok(())
 }
 
 #[tokio::test]

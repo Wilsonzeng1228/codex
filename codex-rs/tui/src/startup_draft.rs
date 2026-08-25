@@ -150,6 +150,7 @@ impl StartupDraft {
 
     /// Apply the loaded editing preferences without enabling startup actions or submission.
     pub(crate) fn apply_config(&mut self, config: &Config) {
+        self.tui.apply_chat_media_config(config.tui_rich_media);
         self.pump.apply_config(config);
     }
 

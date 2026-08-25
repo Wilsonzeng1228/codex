@@ -585,6 +585,8 @@ pub struct Tui {
     pub(crate) terminal: Terminal,
     pending_history_lines: Vec<PendingHistoryLines>,
     chat_media_available_capability: Option<crate::media::ChatMediaCapability>,
+    chat_media_forced_by_env: bool,
+    chat_media_rows_forced_by_env: bool,
     chat_media_placeholder_rows: Option<crate::media::MediaPlaceholderRows>,
     chat_media_protocol: Option<crate::media::ImageProtocol>,
     media_placements: crate::media::MediaPlacementRegistry,
@@ -650,6 +652,9 @@ impl Tui {
         let chat_media_capability = crate::media::chat_media_capability_override_from_env();
         let chat_media_available_capability =
             chat_media_capability.or_else(crate::media::detected_chat_media_capability_from_env);
+        let chat_media_forced_by_env = chat_media_capability.is_some();
+        let chat_media_rows_forced_by_env =
+            std::env::var_os("CODEX_TUI_MEDIA_PLACEHOLDER_ROWS").is_some();
         let media_loads = crate::media::MediaLoadCoordinator::new(frame_requester.clone());
 
         Self {
@@ -659,6 +664,8 @@ impl Tui {
             terminal,
             pending_history_lines: vec![],
             chat_media_available_capability,
+            chat_media_forced_by_env,
+            chat_media_rows_forced_by_env,
             chat_media_placeholder_rows: chat_media_capability
                 .map(|capability| capability.placeholder_rows),
             chat_media_protocol: chat_media_capability.map(|capability| capability.protocol),
@@ -982,6 +989,30 @@ impl Tui {
         }
     }
 
+    /// Apply persistent startup policy without overriding explicit diagnostic environment flags.
+    pub(crate) fn apply_chat_media_config(
+        &mut self,
+        config: codex_config::types::TuiRichMediaConfig,
+    ) {
+        if self.chat_media_forced_by_env {
+            return;
+        }
+
+        if !self.chat_media_rows_forced_by_env
+            && let Some(placeholder_rows) = config
+                .placeholder_rows
+                .and_then(|rows| crate::media::MediaPlaceholderRows::try_from(rows).ok())
+            && placeholder_rows.get() <= 32
+            && let Some(capability) = self.chat_media_available_capability.as_mut()
+        {
+            capability.placeholder_rows = placeholder_rows;
+        }
+
+        if let Some(enabled) = config.enabled {
+            self.set_chat_media_enabled(enabled);
+        }
+    }
+
     /// Change the session-local rich-media state without persisting configuration.
     ///
     /// Retirement must run while the old protocol is still active so Kitty placements receive
@@ -1042,6 +1073,20 @@ impl Tui {
                 protocol: crate::media::ImageProtocol::Kitty,
                 placeholder_rows,
             });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_chat_media_available_capability_for_test(
+        &mut self,
+        protocol: crate::media::ImageProtocol,
+        image_placeholder_rows: crate::media::MediaPlaceholderRows,
+    ) {
+        self.chat_media_placeholder_rows = None;
+        self.chat_media_protocol = None;
+        self.chat_media_available_capability = Some(crate::media::ChatMediaCapability {
+            protocol,
+            placeholder_rows: image_placeholder_rows,
+        });
     }
 
     #[cfg(test)]
