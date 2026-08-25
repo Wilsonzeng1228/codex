@@ -10,7 +10,7 @@
 pwsh -File .\scripts\install-codex-rich.ps1
 ```
 
-脚本默认构建 release 版并安装为 `%LOCALAPPDATA%\Programs\codex-rich\bin\codex-rich.exe`，同时把该目录加入用户 `PATH`。打开新的 PowerShell 后单命令启动：
+脚本默认构建 release 版并安装为 `%LOCALAPPDATA%\Programs\codex-rich\bin\codex-rich.exe`，同时安装工具调用所需的 `codex-code-mode-host.exe`，并把该目录加入用户 `PATH`。host 使用 OpenAI Codex 官方 Windows release 资产，按固定 SHA-256 校验后才会安装。打开新的 PowerShell 后单命令启动：
 
 ```powershell
 codex-rich
@@ -22,13 +22,13 @@ codex-rich
 codex
 ```
 
-更新时在新代码上重新执行同一安装命令；安装器会把当前版本保留为 `codex-rich.previous.exe`。回滚上一版：
+更新时在新代码上重新执行同一安装命令；安装器会同时保留 `codex-rich.previous.exe` 与 `codex-code-mode-host.previous.exe`。回滚上一版：
 
 ```powershell
 pwsh -File .\scripts\install-codex-rich.ps1 -Rollback
 ```
 
-开发验收可用 `-Profile Debug`。已有构建产物也可通过 `-SourceBinary <codex.exe>` 安装；此模式不会重新编译。
+开发验收可用 `-Profile Debug`。已有构建产物也可通过 `-SourceBinary <codex.exe>` 安装；此模式不会重新编译。离线安装或使用自编译 host 时，再传入 `-CodeModeHostBinary <codex-code-mode-host.exe>`。
 
 ## 输出格式
 
