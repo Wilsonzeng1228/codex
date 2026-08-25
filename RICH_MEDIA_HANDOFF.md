@@ -547,6 +547,7 @@ Phase 3 已选择 RaTeX `0.1.14` 并完成行内/块级公式、流式未闭合�
 - 公式根因是十行 fallback 防泄漏高度仍小于六个数学行达到单行公式字号所需的 `6 × 3 = 18` 行。图片根因是 iTerm2 writer 发送 `width=<列>;height=<行>`，WezTerm 默认保持宽高比，宽图按列宽放大后会越出固定四行并被 composer 覆盖。
 - TDD 的两个 RED 分别为公式 `actual 10 / expected 18`，以及 961×235 图片在 80×4 cells、10×20 px/cell 下缺少预期的 327×80 px contain 命令。最小实现按 LaTeX `\\` 数量估算数学行并复用行内公式三行高度；普通 iTerm2 图片与公式共同使用显式像素纵横比拟合。Kitty、图片解码、缓存、Markdown/copy/persisted text 均不变。
 - 两项定向测试 GREEN；完整 `just test -p codex-tui --status-level fail --final-status-level fail` 为 3810/3810 通过、10 项跳过。
+- 已用 `CARGO_BUILD_JOBS=1`、`CARGO_INCREMENTAL=0` 重建并覆盖安装标准 `codex-rich`；构建件与安装件 SHA-256 均为 `2448821AD1AF0C54BBDFD68C087ACA5C382438B7DE795CC16E82AAF834101C1E`，`--version` 为 `codex-cli 0.0.0`。安装后 target 为 17.54 GiB，低于 18 GiB 预警线；用户级 `PATH` 已包含安装目录，官方 `codex` 未被覆盖。
 
 ### 8.11 Phase 4 持久配置与缓存清理
 
