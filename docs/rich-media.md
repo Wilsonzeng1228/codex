@@ -93,6 +93,8 @@ codex-rich
 5. 公式或图片不显示时复制消息；若原始 Markdown 正常，问题位于终端能力/协议层而不是会话数据。
 6. Windows 构建若报可执行文件 `os error 5`，先退出占用该目标二进制的旧 `codex-rich` 进程，再重试构建或安装。
 
+真实终端发布验收统一使用 [`terminal-acceptance.md`](terminal-acceptance.md)；自动测试不能替代其中的 WezTerm、Kitty、Windows Terminal 和 SSH/远程观察。
+
 ## 上游同步与 PR 拆分
 
 同步前先保存工作区并运行：

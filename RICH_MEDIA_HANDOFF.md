@@ -27,9 +27,9 @@
 - 工作仓库：`D:\hermes\agent-repl\codex-rich`
 - 当前分支：`codex/rich-media`
 - 官方基线：`d44696065723a56b9de6538cd6348fcbe6c1542e`
-- 最新实现提交（本交接文档更新前）：`901deeefae fix: 修复 Windows 路径回归基线`
-- 远程仓库只有：`upstream https://github.com/openai/codex.git`
-- 尚无 `origin`：用户还没有提供 fork 地址，不要自行猜测或推送。
+- 当前 HEAD（本轮验收文档更新前）：`38da2924e5 docs: 更新富媒体最终交接`
+- `upstream`：`https://github.com/openai/codex.git`
+- `origin`：`https://github.com/Wilsonzeng1228/codex.git`，已通过 GitHub API 确认为 `openai/codex` 的 fork。
 - 父目录的 `D:\hermes\agent-repl\graphify-out` 是旁路代码图产物，包含可查询的 `graph.json`、`graph.html` 与 `GRAPH_REPORT.md`，不属于本仓库，不要加入提交。
 
 最近的实现提交（不含本交接文档待提交变更）：
@@ -564,14 +564,13 @@ Phase 3 已选择 RaTeX `0.1.14` 并完成行内/块级公式、流式未闭合�
 - Sixel 编码仍留在 pets 专用实现，尚未完全移入通用媒体层；
 - 媒体节点尚未把公式/图片的源字节范围暴露为公共模型字段；
 - LaTeX 的真实 WezTerm 公式显示、运行时开关和复制语义已执行；行内三行已由用户确认可读，块级至少六行及高度缩放保留修复已完成自动日志和回归，仍待已安装 `codex-rich` 的最终肉眼确认。
-- 总体规划 12.5 要求的真实终端矩阵还缺 Kitty、Windows Terminal 安全降级、不支持图片终端和 SSH/远程环境；自动测试不能替代这些人工观察。当前机器没有 Kitty，且自动桌面控制规则禁止代理操作终端，因此需要用户侧执行并回传现象。
-- Phase 0 规划中的 `origin -> 用户自己的 fork` 仍缺用户 fork URL；只有 `upstream`，不能自行猜测或推送。
+- 总体规划 12.5 要求的真实终端矩阵还缺 Kitty、Windows Terminal 安全降级、不支持图片终端和 SSH/远程环境；自动测试不能替代这些人工观察。WSLg `Ubuntu-24.04` 已安装 Kitty 0.32.2，统一启动命令、输入和判据记录在 `docs/terminal-acceptance.md`。自动桌面控制规则禁止代理操作终端，因此仍需用户侧观察并回传现象；SSH 还需要用户授权的目标。
 
 阶段状态：
 
 | 阶段 | 状态 |
 |---|---|
-| Phase 0：基线与架构勘察 | 实现完成；`origin` 待用户提供 |
+| Phase 0：基线与架构勘察 | 已完成；`upstream`/`origin` 已建立 |
 | Phase 1：图片语法、协议、节点与布局 | 已完成 |
 | Phase 2：本地/远程图片 I/O 与缓存 | 已完成 |
 | Phase 3：LaTeX | 已完成 |
@@ -619,7 +618,7 @@ Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\app\resize_reflow.rs
 Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\tui.rs
 ```
 
-不要重做已经通过的 Windows WezTerm 本地/HTTPS 图片 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、普通后续消息保留、滚动/resize、真实 `/resume` 任务切换、空闲 `/clear` retirement、本地异步 TUI 集成、PNG/JPEG/WebP/GIF 静态首帧、HTTPS 安全策略、Fake-IP DoH fallback、production DNS resolver、pinned HTTP adapter、远程 coordinator/writer 自动测试、RaTeX 后端尖峰、LaTeX 解析/缓存/透明覆盖、工科样例集、`/rich-media` 命令路由、持久配置、缓存清理、Skill、安装器、Code Mode host 或前几版小窗口失败复现。下一轮只需使用已安装的 `codex-rich`：关闭块级至少六行与窗口高度缩放的最终肉眼验收，补做 Kitty/Windows Terminal/不支持图片终端/SSH 的真实兼容矩阵，并在用户提供 fork URL 后添加 `origin`。
+不要重做已经通过的 Windows WezTerm 本地/HTTPS 图片 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、普通后续消息保留、滚动/resize、真实 `/resume` 任务切换、空闲 `/clear` retirement、本地异步 TUI 集成、PNG/JPEG/WebP/GIF 静态首帧、HTTPS 安全策略、Fake-IP DoH fallback、production DNS resolver、pinned HTTP adapter、远程 coordinator/writer 自动测试、RaTeX 后端尖峰、LaTeX 解析/缓存/透明覆盖、工科样例集、`/rich-media` 命令路由、持久配置、缓存清理、Skill、安装器、Code Mode host 或前几版小窗口失败复现。下一轮按 `docs/terminal-acceptance.md` 使用已安装的 `codex-rich`，只需关闭块级至少六行与窗口高度缩放的最终肉眼验收，并补做 Kitty/Windows Terminal/不支持图片终端/SSH 的真实兼容矩阵。
 
 ## 12. Phase 1 完成判据
 
