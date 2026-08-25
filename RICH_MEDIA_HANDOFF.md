@@ -27,14 +27,16 @@
 - 工作仓库：`D:\hermes\agent-repl\codex-rich`
 - 当前分支：`codex/rich-media`
 - 官方基线：`d44696065723a56b9de6538cd6348fcbe6c1542e`
-- 当前 HEAD（本轮验收文档更新前）：`38da2924e5 docs: 更新富媒体最终交接`
+- 当前 HEAD（本交接同步前）：`ee0b767aca docs: 固化真实终端验收矩阵`
 - `upstream`：`https://github.com/openai/codex.git`
 - `origin`：`https://github.com/Wilsonzeng1228/codex.git`，已通过 GitHub API 确认为 `openai/codex` 的 fork。
+- `codex/rich-media` 已推送并跟踪 `origin/codex/rich-media`；本地与 GitHub API 均核验为 `ee0b767acaac5d30ed7c36402e49ea368a300f7b`。首次 push 被全局失效代理 `127.0.0.1:7892` 拒绝，使用仅对该命令生效的空代理覆盖后成功；未改写用户全局 Git 配置。
 - 父目录的 `D:\hermes\agent-repl\graphify-out` 是旁路代码图产物，包含可查询的 `graph.json`、`graph.html` 与 `GRAPH_REPORT.md`，不属于本仓库，不要加入提交。
 
 最近的实现提交（不含本交接文档待提交变更）：
 
 ```text
+ee0b767aca docs: 固化真实终端验收矩阵
 901deeefae fix: 修复 Windows 路径回归基线
 b5e7d75b9f feat: 在富媒体状态中显示终端
 b81addac04 fix: 随 codex-rich 安装 Code Mode host
