@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
 > 更新时间：2026-08-25
-> 当前状态：Phase 1、Phase 2、Phase 3、Phase 5 与 Phase 6 已完成；Phase 4 只剩用户侧最终视觉签字。Windows WezTerm 已通过本地 PNG/JPEG/WebP/GIF 静态首帧、公网 HTTPS、TUN Fake-IP fallback、finalized history、后续普通消息保留、滚动、resize/reflow、任务切换、`/clear` 与退出 retirement 的真实视觉验收；私网 HTTPS 和无协议能力均保持文本降级。LaTeX 已接入 `$...$`/`$$...$$` 解析、RaTeX 进程内透明 PNG 渲染、异步协调、主题/宽度缓存键、资源限制和原文回退。`/rich-media [status|on|off|clear-cache]`、`[tui.rich_media]` 持久配置、用户文档、配套 skill 与可回滚安装器均已交付。标准 debug 二进制已构建并安装为独立的 `codex-rich`，官方 `codex` 未被覆盖。块级公式至少六行及高度缩放修复已有自动日志和回归证据，仍待用户肉眼确认最终尺寸。Sixel 与 Kitty Unicode placeholders 仍为后续可选扩展。
+> 当前状态：Phase 1、Phase 2、Phase 3 与 Phase 6 的实现已完成；Phase 4 只剩用户侧最终公式视觉签字，Phase 5 只剩总体规划要求的真实终端兼容矩阵。Windows WezTerm 已通过本地 PNG/JPEG/WebP/GIF 静态首帧、公网 HTTPS、TUN Fake-IP fallback、finalized history、后续普通消息保留、滚动、resize/reflow、任务切换、`/clear` 与退出 retirement 的真实视觉验收；私网 HTTPS 和无协议能力均保持文本降级。LaTeX 已接入 `$...$`/`$$...$$` 解析、RaTeX 进程内透明 PNG 渲染、异步协调、主题/宽度缓存键、资源限制和原文回退。`/rich-media [status|on|off|clear-cache]`、`[tui.rich_media]` 持久配置、用户文档、配套 skill 与可回滚安装器均已交付。最新 debug 二进制与官方 Code Mode host 已共同安装为独立的 `codex-rich`，真实工具调用成功，官方 `codex` 未被覆盖。块级公式至少六行及高度缩放修复已有自动日志和回归证据，仍待用户肉眼确认最终尺寸。Sixel 与 Kitty Unicode placeholders 仍为后续可选扩展。
 
 ## 新对话启动指令
 
@@ -27,7 +27,7 @@
 - 工作仓库：`D:\hermes\agent-repl\codex-rich`
 - 当前分支：`codex/rich-media`
 - 官方基线：`d44696065723a56b9de6538cd6348fcbe6c1542e`
-- 当前实现 HEAD：`993fdeb272 docs: 补充富媒体使用与交付指南`
+- 最新实现提交（本交接文档更新前）：`901deeefae fix: 修复 Windows 路径回归基线`
 - 远程仓库只有：`upstream https://github.com/openai/codex.git`
 - 尚无 `origin`：用户还没有提供 fork 地址，不要自行猜测或推送。
 - 父目录的 `D:\hermes\agent-repl\graphify-out` 是旁路代码图产物，包含可查询的 `graph.json`、`graph.html` 与 `GRAPH_REPORT.md`，不属于本仓库，不要加入提交。
@@ -35,6 +35,11 @@
 最近的实现提交（不含本交接文档待提交变更）：
 
 ```text
+901deeefae fix: 修复 Windows 路径回归基线
+b5e7d75b9f feat: 在富媒体状态中显示终端
+b81addac04 fix: 随 codex-rich 安装 Code Mode host
+c7be2a65c5 feat: 报告最近富媒体渲染错误
+dab5948a47 docs: 更新富媒体最终交接
 993fdeb272 docs: 补充富媒体使用与交付指南
 005ebf091b feat: 添加 codex-rich 可回滚安装器
 179259bb0d feat: 添加富媒体内存缓存清理
@@ -414,9 +419,9 @@ $env:CARGO_INCREMENTAL='0'
 - TUI 重新链接常需 2–3 分钟，长时间无输出不等于挂死。
 - `codex-rs/target` 曾增长到 33.13 GiB，其中 17.77 GiB 是 incremental；已用 `cargo clean` 释放 33.1 GiB，并在根 `AGENTS.md` 写入 20 GiB 硬红线、18 GiB 预警和清理纪律。
 - 后续本地 Rust 命令必须设置 `CARGO_INCREMENTAL=0` 并在命令前后检查 `codex-rs/target`；不得并发启动多套构建。本轮 target 一度达到 18.21 GiB，已按纪律执行 `cargo clean` 释放约 18.2 GiB；完成重新构建、完整测试和 Clippy 后为 15.74 GiB，低于红线。
-- 2026-08-24 收尾时，为同时生成 CLI 与 Code Mode host，target 增长到约 17.99 GiB 后按 18 GiB 停止线中止并 `cargo clean`，释放约 18.0 GiB。随后单独重建 `codex-cli` 成功；`target\debug\codex.exe` 是包含本轮图片修复的新二进制。
-- `codex-code-mode-host` 不是图片功能依赖。它在 D 盘 target 构建时先受 `v8` 跨盘符 symlink 权限限制；改用 C 盘固定临时 target 后越过该问题，但上游 `rusty_v8 v150.4.0` Windows 预编译资产 URL 直接返回 404，因此没有生成 `codex-code-mode-host.exe`。临时 target 已精确清理，释放约 2.64 GiB；不要为消除启动提示而在本阶段改成体量不可控的 V8 源码构建。
-- 因此当前自编译 TUI 启动时仍可能提示 Code Mode host 缺失；这是可选 Code Mode 的独立交付物缺失，不是图片回归，也不影响普通对话或富媒体显示。WezTerm 中 `Ctrl+V` 由 Codex 固定用于“从系统剪贴板附加图片”，剪贴板没有图片时出现 paste image failure 符合预期；普通文字粘贴使用 WezTerm 的 `Ctrl+Shift+V`。
+- 2026-08-25 完整回归前 target 为 18.30 GiB；完整测试完成后精确执行 `cargo clean -p codex-tui`，释放 3.9 GiB，再单任务重建 `codex-cli`。最终 target 为 17.54 GiB，低于 18 GiB 停止线。
+- 本地源码构建 `codex-code-mode-host` 仍受 `rusty_v8` Windows 预编译资产缺失限制，但安装器已改为使用 OpenAI Codex 官方 `rust-v0.149.1` Windows release host，并按架构固定 SHA-256 后下载或接受显式 `-CodeModeHostBinary`。不要在本仓库转为体量不可控的 V8 源码构建。
+- 当前 `codex-rich.exe` 与 `codex-code-mode-host.exe` 已共同安装；host SHA-256 为 `8f98cc7aa079b51dbfbb16a8e655a468a9c37c1cd23e22422c10cdfd6cace543`（x64）。已安装 CLI 的真实 `exec --ephemeral` 工具调用成功读取 `901deeefae`，因此不再把 host 视作可忽略的启动提示。WezTerm 中 `Ctrl+V` 由 Codex 固定用于“从系统剪贴板附加图片”，剪贴板没有图片时出现 paste image failure 符合预期；普通文字粘贴使用 WezTerm 的 `Ctrl+Shift+V`。
 - Rust 为项目锁定的 1.95；`just` 1.58；`cargo-nextest` 0.9.143。
 - 当前机器已安装 WezTerm `20240203-110809-5046fc22`；Kitty 未安装，也未为本轮额外安装。Windows WezTerm 已足够完成聊天图片与文本降级对照。
 - CMake、Ninja 是否可用与本轮 TUI 验收无关，未为此安装或修改。
@@ -530,19 +535,27 @@ Phase 3 已选择 RaTeX `0.1.14` 并完成行内/块级公式、流式未闭合�
 
 - 配置模型新增 `TuiRichMediaConfig { enabled, placeholder_rows }`，对应用户或可信项目配置中的 `[tui.rich_media]`；`placeholder_rows` 仍限制为 1–32。运行时环境变量诊断 override 的优先级最高，显式 `enabled = false` 会关闭显示但保留已探测 capability，便于会话内重新开启。
 - `/rich-media clear-cache` 同时清空本地图片 LRU 与 LaTeX LRU，并让仍有 waiter 的来源失效后重新加载。HTTPS 没有磁盘缓存，命令会让活动远程来源重新下载；状态卡报告重新加载的来源数。
+- `/rich-media status` 现在同时报告启动时探测到的终端标识、当前 capability/protocol/renderer/remote policy，以及最近一次本地图片、远程图片或 LaTeX 渲染错误；`clear-cache` 会清除旧错误，重新加载失败时记录新错误。
 - TDD 分别覆盖配置反序列化、runtime config 应用、环境变量优先级、cache clear、live source generation 失效和两类 LRU 清理；相关定向测试全部通过。
 
 ### 8.12 Phase 5 文档与 Skill
 
 - 用户指南位于 `docs/rich-media.md`，覆盖安装、更新、回滚、持久配置、运行时命令、安全边界、故障排查与上游拆分建议；README 已加入入口。
 - 仓库内 skill 位于 `.codex/skills/codex-rich-media/SKILL.md`。它要求模型使用标准 Markdown 图片与 `$...$`/`$$...$$`，禁止控制序列、Base64/XML、伪造路径和隐式图片生成。Skill Creator 的 `quick_validate.py` 已在 UTF-8 模式下验证通过。
+- 使用已安装二进制对同一请求完成双路径实测：仓库内启用 skill 与空临时目录中无项目 skill 时，均输出标准 Markdown 图片和 `$...$`/`$$...$$`；skill 路径的措辞更严格，但富媒体显示不依赖模型记住终端协议。
 
 ### 8.13 Phase 6 构建、安装与上游演练
 
-- `scripts/install-codex-rich.ps1` 支持默认 Release 构建、`-Profile Debug`、`-SourceBinary`、`-Rollback` 和 `-NoPathUpdate`；安装到 `%LOCALAPPDATA%\Programs\codex-rich\bin\codex-rich.exe`，保留 `codex-rich.previous.exe`，不覆盖官方 `codex.exe`。
-- 安装器 smoke 已通过首次安装、更新保留 previous 和 rollback。最终使用单任务、禁用 incremental 的 `cargo build -p codex-cli` 成功构建 debug 标准二进制；已从该二进制安装，源文件与安装文件 SHA-256 一致，`codex-rich --version` 输出 `codex-cli 0.0.0`，用户 PATH 已包含独立安装目录，官方 `codex` 仍解析到 OpenAI Codex 安装目录。
+- `scripts/install-codex-rich.ps1` 支持默认 Release 构建、`-Profile Debug`、`-SourceBinary`、`-CodeModeHostBinary`、`-Rollback` 和 `-NoPathUpdate`；安装到 `%LOCALAPPDATA%\Programs\codex-rich\bin`，同时保留 CLI/host 的 previous，不覆盖官方 `codex.exe`。
+- 安装器 smoke 已通过 CLI/host 首次安装、更新保留 previous 和成对 rollback；默认下载路径也完成真实校验。最终使用单任务、禁用 incremental 的 `cargo build -p codex-cli` 成功构建 debug 标准二进制；已重新安装最新源码构建，源文件与安装文件 SHA-256 同为 `57f0c07a4de367e0d1857d48d01fbbe302c75fbde11436b4e6f8ff61a3e56d38`，`codex-rich --version` 输出 `codex-cli 0.0.0`，真实工具调用返回 `901deeefae`，官方 `codex` 仍解析到 OpenAI Codex 安装目录。
 - `git fetch upstream` 已刷新到 `upstream/main@2e4675919ee9`。以当前 HEAD 做 `git merge-tree --write-tree` 的只读演练发现 3 个内容冲突：`codex-rs/tui/src/chatwidget/rendering.rs`、`codex-rs/tui/src/markdown_render.rs`、`codex-rs/tui/src/markdown_render/streaming.rs`；其余列出的重叠文件可自动合并。未来同步时先处理这三个 Markdown/渲染热点。
 - 本轮 `just fmt` 因仓库缺少 `tools/buildifier` 未能整体完成，但 Rust `cargo fmt` 已执行；`just fix -p codex-config` 会新建 Clippy 构建图并突破磁盘硬限制，因此在 21.66 GiB 时中止并安全清理到限制内。未为掩盖环境限制而重复构建。
+
+### 8.14 最终回归基线
+
+- 两项长期 Windows 基线失败均已按根因关闭：目录信任读写统一使用能展开 8.3 短路径的 canonicalization；Kitty local-file 测试只拒绝真正的 inline payload 边界，不再把 Base64 路径中偶然出现的 `cG5n` 当成 PNG 正文。
+- RED 时完整套件为 3806 通过、2 失败、10 跳过；最小修复后两项隔离测试 2/2 通过，最终 `just test -p codex-tui --status-level fail --final-status-level fail` 为 3808/3808 通过、10 跳过。
+- `cargo fmt --all -- --check` 与 `git diff --check` 均通过；stable rustfmt 只报告仓库既有 nightly `imports_granularity` 选项提示。
 
 ## 9. 尚未完成
 
@@ -551,17 +564,19 @@ Phase 3 已选择 RaTeX `0.1.14` 并完成行内/块级公式、流式未闭合�
 - Sixel 编码仍留在 pets 专用实现，尚未完全移入通用媒体层；
 - 媒体节点尚未把公式/图片的源字节范围暴露为公共模型字段；
 - LaTeX 的真实 WezTerm 公式显示、运行时开关和复制语义已执行；行内三行已由用户确认可读，块级至少六行及高度缩放保留修复已完成自动日志和回归，仍待已安装 `codex-rich` 的最终肉眼确认。
+- 总体规划 12.5 要求的真实终端矩阵还缺 Kitty、Windows Terminal 安全降级、不支持图片终端和 SSH/远程环境；自动测试不能替代这些人工观察。当前机器没有 Kitty，且自动桌面控制规则禁止代理操作终端，因此需要用户侧执行并回传现象。
+- Phase 0 规划中的 `origin -> 用户自己的 fork` 仍缺用户 fork URL；只有 `upstream`，不能自行猜测或推送。
 
 阶段状态：
 
 | 阶段 | 状态 |
 |---|---|
-| Phase 0：基线与架构勘察 | 已完成 |
+| Phase 0：基线与架构勘察 | 实现完成；`origin` 待用户提供 |
 | Phase 1：图片语法、协议、节点与布局 | 已完成 |
 | Phase 2：本地/远程图片 I/O 与缓存 | 已完成 |
 | Phase 3：LaTeX | 已完成 |
 | Phase 4：交互与配置 | 进行中（代码完成，只差最终视觉签字） |
-| Phase 5：文档、技能与验收 | 已完成 |
+| Phase 5：文档、技能与验收 | 文档/Skill/自动验收完成；真实终端矩阵待用户 |
 | Phase 6：打包/交付 | 已完成 |
 
 ## 10. Git 工作区注意事项
@@ -604,7 +619,7 @@ Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\app\resize_reflow.rs
 Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\tui.rs
 ```
 
-不要重做已经通过的 Windows WezTerm 本地/HTTPS 图片 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、普通后续消息保留、滚动/resize、真实 `/resume` 任务切换、空闲 `/clear` retirement、本地异步 TUI 集成、PNG/JPEG/WebP/GIF 静态首帧、HTTPS 安全策略、Fake-IP DoH fallback、production DNS resolver、pinned HTTP adapter、远程 coordinator/writer 自动测试、RaTeX 后端尖峰、LaTeX 解析/缓存/透明覆盖、工科样例集、`/rich-media` 命令路由、持久配置、缓存清理、Skill、安装器或前几版小窗口失败复现。下一轮只需启动已安装的 `codex-rich`，关闭块级至少六行及窗口高度缩放的最终肉眼验收；若通过即可宣布当前范围完成。
+不要重做已经通过的 Windows WezTerm 本地/HTTPS 图片 smoke、capability override、稳定 anchor、可注入 writer、history insertion-time 锚定、finalized consolidation reflow、普通后续消息保留、滚动/resize、真实 `/resume` 任务切换、空闲 `/clear` retirement、本地异步 TUI 集成、PNG/JPEG/WebP/GIF 静态首帧、HTTPS 安全策略、Fake-IP DoH fallback、production DNS resolver、pinned HTTP adapter、远程 coordinator/writer 自动测试、RaTeX 后端尖峰、LaTeX 解析/缓存/透明覆盖、工科样例集、`/rich-media` 命令路由、持久配置、缓存清理、Skill、安装器、Code Mode host 或前几版小窗口失败复现。下一轮只需使用已安装的 `codex-rich`：关闭块级至少六行与窗口高度缩放的最终肉眼验收，补做 Kitty/Windows Terminal/不支持图片终端/SSH 的真实兼容矩阵，并在用户提供 fork URL 后添加 `origin`。
 
 ## 12. Phase 1 完成判据
 
@@ -616,5 +631,5 @@ Get-Content -Raw -Encoding utf8 .\codex-rs\tui\src\tui.rs
 - [x] 真实 `/resume` 任务切换和空闲 `/clear` 消息移除已有专门视觉记录；
 - [x] 不支持协议时文本降级正常且日志中没有 placement/write；
 - [x] raw Markdown、复制内容和持久化 `Line` 不含终端协议字节；
-- [x] 相关定向测试通过，完整 `codex-tui` 测试集只保留两项既有基线失败；
+- [x] 相关定向测试通过，完整 `codex-tui` 测试集 3808/3808 通过、10 项按配置跳过；
 - [x] 本轮相关文档已同步并纳入精确 Git 提交。
