@@ -969,6 +969,25 @@ mod tests {
     const WORKSPACE_ID_B: &str = "123e4567-e89b-42d3-a456-426614174001";
 
     #[test]
+    fn tui_rich_media_config_deserializes() {
+        let config: ConfigToml = toml::from_str(
+            r#"
+[tui.rich_media]
+enabled = true
+placeholder_rows = 8
+"#,
+        )
+        .expect("rich media config should deserialize");
+
+        let rich_media = config
+            .tui
+            .expect("config should include tui section")
+            .rich_media;
+        assert_eq!(rich_media.enabled, Some(true));
+        assert_eq!(rich_media.placeholder_rows, Some(8));
+    }
+
+    #[test]
     fn forced_chatgpt_workspace_id_accepts_single_string() {
         let config: ConfigToml = toml::from_str(&format!(
             r#"forced_chatgpt_workspace_id = "{WORKSPACE_ID_A}""#

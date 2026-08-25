@@ -53,6 +53,7 @@ use codex_config::types::ToolSuggestDiscoverable;
 use codex_config::types::TuiKeymap;
 use codex_config::types::TuiNotificationSettings;
 use codex_config::types::TuiPetAnchor;
+use codex_config::types::TuiRichMediaConfig;
 use codex_config::types::UriBasedFileOpener;
 use codex_config::types::WindowsSandboxModeToml;
 use codex_core_plugins::PluginLoadOutcome;
@@ -715,6 +716,9 @@ pub struct Config {
 
     /// Start the TUI in raw scrollback mode for copy-friendly transcript output.
     pub tui_raw_output_mode: bool,
+
+    /// Persistent rich-media startup settings for the TUI.
+    pub tui_rich_media: TuiRichMediaConfig,
 
     /// Start the TUI in the specified collaboration mode (plan/default).
 
@@ -4219,6 +4223,11 @@ impl Config {
                 .as_ref()
                 .map(|t| t.raw_output_mode)
                 .unwrap_or(false),
+            tui_rich_media: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.rich_media)
+                .unwrap_or_default(),
             tui_alternate_screen: cfg
                 .tui
                 .as_ref()

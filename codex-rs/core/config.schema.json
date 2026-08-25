@@ -3762,6 +3762,18 @@
           "default": null,
           "description": "Working directory to use when resuming or forking a session. When unset, prompt if the current and session directories differ."
         },
+        "rich_media": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TuiRichMediaConfig"
+            }
+          ],
+          "default": {
+            "enabled": null,
+            "placeholder_rows": null
+          },
+          "description": "Persistent rich-media startup settings."
+        },
         "session_picker_view": {
           "allOf": [
             {
@@ -4711,6 +4723,26 @@
           "type": "string"
         }
       ]
+    },
+    "TuiRichMediaConfig": {
+      "additionalProperties": false,
+      "description": "Persistent startup settings for rich media in the TUI.",
+      "properties": {
+        "enabled": {
+          "default": null,
+          "description": "Enable rich media at startup when the terminal supports it.",
+          "type": "boolean"
+        },
+        "placeholder_rows": {
+          "default": null,
+          "description": "Number of terminal rows reserved for media placeholders.",
+          "format": "uint16",
+          "maximum": 32.0,
+          "minimum": 1.0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
     },
     "TuiVimNormalKeymap": {
       "additionalProperties": false,

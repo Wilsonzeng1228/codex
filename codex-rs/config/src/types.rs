@@ -692,6 +692,20 @@ pub struct ModelAvailabilityNuxConfig {
 /// Fallback resize-reflow row cap when Codex cannot identify a terminal-specific scrollback size.
 pub const DEFAULT_TERMINAL_RESIZE_REFLOW_FALLBACK_MAX_ROWS: usize = 1_000;
 
+/// Persistent startup settings for rich media in the TUI.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct TuiRichMediaConfig {
+    /// Enable rich media at startup when the terminal supports it.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+
+    /// Number of terminal rows reserved for media placeholders.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 32))]
+    pub placeholder_rows: Option<u16>,
+}
+
 /// Collection of settings that are specific to the TUI.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -718,6 +732,10 @@ pub struct Tui {
     /// Defaults to `false`.
     #[serde(default)]
     pub raw_output_mode: bool,
+
+    /// Persistent rich-media startup settings.
+    #[serde(default)]
+    pub rich_media: TuiRichMediaConfig,
 
     /// Controls whether the TUI uses the terminal's alternate screen buffer.
     ///

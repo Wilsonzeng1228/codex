@@ -68,6 +68,7 @@ use codex_config::types::Tui;
 use codex_config::types::TuiKeymap;
 use codex_config::types::TuiNotificationSettings;
 use codex_config::types::TuiPetAnchor;
+use codex_config::types::TuiRichMediaConfig;
 use codex_config::types::WindowsSandboxModeToml;
 use codex_config::types::WindowsToml;
 use codex_exec_server::LOCAL_FS;
@@ -1192,6 +1193,7 @@ fn config_toml_deserializes_model_availability_nux() {
             show_tooltips: true,
             vim_mode_default: false,
             raw_output_mode: false,
+            rich_media: TuiRichMediaConfig::default(),
             alternate_screen: AltScreenMode::default(),
             status_line: None,
             status_line_use_colors: true,
@@ -1351,6 +1353,31 @@ async fn runtime_config_uses_tui_raw_output_mode() {
     .expect("load config");
 
     assert!(cfg.tui_raw_output_mode);
+}
+
+#[tokio::test]
+async fn runtime_config_uses_tui_rich_media_config() {
+    let toml = r#"
+        [tui.rich_media]
+        enabled = false
+        placeholder_rows = 6
+    "#;
+    let cfg_toml: ConfigToml = toml::from_str(toml).expect("deserialize rich media config");
+    let cfg = Config::load_from_base_config_with_overrides(
+        cfg_toml,
+        ConfigOverrides::default(),
+        tempdir().expect("tempdir").abs(),
+    )
+    .await
+    .expect("load config");
+
+    assert_eq!(
+        cfg.tui_rich_media,
+        TuiRichMediaConfig {
+            enabled: Some(false),
+            placeholder_rows: Some(6),
+        }
+    );
 }
 
 #[test]
@@ -4271,6 +4298,7 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             show_tooltips: true,
             vim_mode_default: false,
             raw_output_mode: false,
+            rich_media: TuiRichMediaConfig::default(),
             alternate_screen: AltScreenMode::Auto,
             status_line: None,
             status_line_use_colors: true,
