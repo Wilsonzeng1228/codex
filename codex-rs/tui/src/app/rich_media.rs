@@ -38,7 +38,7 @@ impl App {
 }
 
 fn rich_media_status_cell(
-    status: crate::media::ChatMediaRuntimeStatus,
+    status: crate::media::ChatMediaRuntimeStatus<'_>,
     action: RichMediaAction,
     changed: bool,
     reloaded_sources: Option<usize>,
@@ -58,12 +58,14 @@ fn rich_media_status_cell(
         .available
         .map(|capability| capability.placeholder_rows.get().to_string())
         .unwrap_or_else(|| "-".to_string());
+    let last_error = status.last_error.unwrap_or("none");
     let mut lines: Vec<Line<'static>> = vec![
         vec!["• ".dim(), format!("Rich media: {state}").into()].into(),
         format!("  Protocol: {protocol}").into(),
         format!("  Placeholder rows: {placeholder_rows}").into(),
         "  LaTeX renderer: RaTeX (ready)".into(),
         "  Remote images: HTTPS public addresses only".into(),
+        format!("  Last render error: {last_error}").into(),
         "  Runtime command: /rich-media [status|on|off|clear-cache]".into(),
     ];
     if matches!(action, RichMediaAction::Enable) && !changed {

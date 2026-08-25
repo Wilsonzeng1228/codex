@@ -242,6 +242,12 @@ async fn failed_https_load_becomes_unavailable() {
         coordinator.image_state(&placement),
         MediaImageState::Unavailable
     );
+    assert_eq!(
+        coordinator.last_error(),
+        Some("remote image: remote image returned HTTP status 404")
+    );
+    assert_eq!(coordinator.clear_cache(), 1);
+    assert_eq!(coordinator.last_error(), None);
 }
 
 #[tokio::test]

@@ -982,10 +982,11 @@ impl Tui {
         self.chat_media_placeholder_rows
     }
 
-    pub(crate) fn chat_media_runtime_status(&self) -> crate::media::ChatMediaRuntimeStatus {
+    pub(crate) fn chat_media_runtime_status(&self) -> crate::media::ChatMediaRuntimeStatus<'_> {
         crate::media::ChatMediaRuntimeStatus {
             enabled: self.chat_media_protocol.is_some(),
             available: self.chat_media_available_capability,
+            last_error: self.media_loads.last_error(),
         }
     }
 

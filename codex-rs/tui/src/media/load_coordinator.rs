@@ -115,6 +115,7 @@ pub(crate) struct MediaLoadCoordinator {
     anchor_sources: HashMap<MediaAnchor, MediaLoadKey>,
     id_anchors: HashMap<MediaId, MediaAnchor>,
     next_generation: u64,
+    last_error: Option<String>,
 }
 
 impl MediaLoadCoordinator {
@@ -185,6 +186,7 @@ impl MediaLoadCoordinator {
             anchor_sources: HashMap::new(),
             id_anchors: HashMap::new(),
             next_generation: 0,
+            last_error: None,
         }
     }
 
@@ -222,6 +224,11 @@ impl MediaLoadCoordinator {
                     source.outcome = Some(LoadOutcome::Ready(image));
                 }
                 Err(error) => {
+                    self.last_error = Some(match &error {
+                        MediaImageLoadError::Local(error) => format!("local image: {error}"),
+                        MediaImageLoadError::Remote(error) => format!("remote image: {error}"),
+                        MediaImageLoadError::Latex(error) => format!("LaTeX: {error}"),
+                    });
                     match &error {
                         MediaImageLoadError::Local(error) => {
                             tracing::debug!(source = ?loaded.source, %error, "failed to prepare local chat image");
@@ -246,6 +253,7 @@ impl MediaLoadCoordinator {
             loader.clear_cache();
         }
         self.latex_renderer.clear_cache();
+        self.last_error = None;
         while self.completion_rx.try_recv().is_ok() {}
 
         let source_keys: Vec<_> = self.sources.keys().cloned().collect();
@@ -266,6 +274,10 @@ impl MediaLoadCoordinator {
             }
         }
         source_keys.len()
+    }
+
+    pub(crate) fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
     }
 
     pub(crate) fn image_state(&self, placement: &RegisteredMediaPlacement) -> MediaImageState {
@@ -330,7 +342,8 @@ impl MediaLoadCoordinator {
         let source = match &placement.request.request.node {
             MediaNode::Image { source, .. } => match resolve_image_source(source) {
                 Ok(source) => MediaLoadKey::Image(source),
-                Err(_) => {
+                Err(error) => {
+                    self.last_error = Some(format!("image source: {error}"));
                     self.detach_id(placement.id);
                     return;
                 }

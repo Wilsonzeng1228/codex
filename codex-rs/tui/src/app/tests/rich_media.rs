@@ -104,6 +104,8 @@ async fn rich_media_status_card_reports_runtime_policy() -> Result<()> {
 
     app.apply_rich_media_action(&mut tui, RichMediaAction::Status)?;
 
+    assert_eq!(tui.chat_media_runtime_status().last_error, None);
+
     let status = app
         .transcript_cells
         .last()
@@ -114,6 +116,7 @@ async fn rich_media_status_card_reports_runtime_policy() -> Result<()> {
   Placeholder rows: 4
   LaTeX renderer: RaTeX (ready)
   Remote images: HTTPS public addresses only
+  Last render error: none
   Runtime command: /rich-media [status|on|off|clear-cache]
 "###);
     Ok(())

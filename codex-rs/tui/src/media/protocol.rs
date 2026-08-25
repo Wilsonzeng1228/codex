@@ -16,9 +16,10 @@ pub(crate) struct ChatMediaCapability {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ChatMediaRuntimeStatus {
+pub(crate) struct ChatMediaRuntimeStatus<'a> {
     pub(crate) enabled: bool,
     pub(crate) available: Option<ChatMediaCapability>,
+    pub(crate) last_error: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
