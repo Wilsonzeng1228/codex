@@ -12,7 +12,6 @@ use super::ImageSource;
 use super::MediaImageState;
 use super::MediaNode;
 use super::MediaPlacementUpdate;
-use super::image::iterm2_transmit_png_bytes;
 use super::image::iterm2_transmit_png_bytes_pixels;
 use super::image::kitty_transmit_png_bytes_with_id;
 use super::kitty_delete_image;
@@ -133,10 +132,11 @@ pub(crate) fn prepare_media_placement_update_with_cell_pixels(
         let command = match protocol {
             ImageProtocol::Iterm2Inline => match &placement.request.request.node {
                 MediaNode::Image { .. } => {
-                    iterm2_transmit_png_bytes(&loaded.bytes, rect.width, rect.height)
+                    let (width, height) = fitted_media_pixel_dimensions(&loaded, rect, cell_pixels);
+                    iterm2_transmit_png_bytes_pixels(&loaded.bytes, width, height)
                 }
                 MediaNode::Latex { .. } => {
-                    let (width, height) = fitted_latex_pixel_dimensions(&loaded, rect, cell_pixels);
+                    let (width, height) = fitted_media_pixel_dimensions(&loaded, rect, cell_pixels);
                     iterm2_transmit_png_bytes_pixels(&loaded.bytes, width, height)
                 }
             },
@@ -214,7 +214,7 @@ pub(crate) fn write_media_placement_update_with_cell_pixels(
     Ok(prepared.report)
 }
 
-fn fitted_latex_pixel_dimensions(
+fn fitted_media_pixel_dimensions(
     loaded: &super::local_loader::LoadedLocalImage,
     rect: Rect,
     cell_pixels: TerminalCellPixels,
@@ -224,8 +224,9 @@ fn fitted_latex_pixel_dimensions(
     let max_width = u32::from(rect.width.max(1)) * u32::from(cell_pixels.width);
     let max_height = u32::from(rect.height.max(1)) * u32::from(cell_pixels.height);
 
-    // Fill the reserved formula area even when RaTeX produced a smaller bitmap; keeping the
-    // intrinsic size makes otherwise valid formulas unreadably small on high-DPI terminals.
+    // Contain the source inside the reserved cells while preserving its aspect ratio. Explicit
+    // pixel dimensions keep WezTerm from choosing one cell axis and overflowing the other; they
+    // also let small RaTeX bitmaps scale up to the readable formula area.
     if u64::from(source_width) * u64::from(max_height)
         >= u64::from(source_height) * u64::from(max_width)
     {

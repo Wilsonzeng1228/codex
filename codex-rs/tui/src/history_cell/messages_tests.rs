@@ -127,7 +127,7 @@ fn finalized_markdown_media_layout_keeps_block_latex_fallback_under_placement() 
 }
 
 #[test]
-fn finalized_multiline_block_latex_reserves_every_fallback_row() {
+fn finalized_multiline_block_latex_reserves_readable_height_for_each_formula_row() {
     let source = concat!(
         "Before\n\n",
         "$$\n",
@@ -152,7 +152,11 @@ fn finalized_multiline_block_latex_reserves_every_fallback_row() {
         .lines()
         .count();
 
-    assert_eq!(usize::from(placement.rect.height), fallback_rows);
+    assert_eq!(
+        placement.rect.height, 18,
+        "six rendered equations need the same three-row height as readable inline math"
+    );
+    assert!(usize::from(placement.rect.height) >= fallback_rows);
     assert!(
         layout
             .lines

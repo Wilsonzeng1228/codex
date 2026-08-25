@@ -89,6 +89,21 @@ mod table_key_value;
 const INLINE_LATEX_PLACEHOLDER_ROWS: u16 = 3;
 const DISPLAY_LATEX_MIN_PLACEHOLDER_ROWS: u16 = 6;
 
+fn display_latex_formula_rows(source: &str) -> u16 {
+    let bytes = source.as_bytes();
+    let mut row_breaks = 0u16;
+    let mut cursor = 0usize;
+    while cursor + 1 < bytes.len() {
+        if bytes[cursor] == b'\\' && bytes[cursor + 1] == b'\\' {
+            row_breaks = row_breaks.saturating_add(1);
+            cursor += 2;
+        } else {
+            cursor += 1;
+        }
+    }
+    row_breaks.saturating_add(1)
+}
+
 pub(crate) use streaming::StreamingMarkdownRender;
 pub(crate) use streaming::render_streaming_markdown_lines_with_width_and_cwd;
 
@@ -2044,12 +2059,15 @@ where
         } else {
             1
         };
+        let readable_formula_rows =
+            display_latex_formula_rows(&latex.source).saturating_mul(INLINE_LATEX_PLACEHOLDER_ROWS);
         let rows = if latex.display {
             self.image_placeholder_rows
                 .map(MediaPlaceholderRows::get)
                 .unwrap_or(1)
                 .max(DISPLAY_LATEX_MIN_PLACEHOLDER_ROWS)
                 .max(fallback_rows)
+                .max(readable_formula_rows)
         } else {
             INLINE_LATEX_PLACEHOLDER_ROWS
         };

@@ -40,7 +40,7 @@ $$
 
 - `status` 能报告 Terminal、State、Protocol、Renderer、Remote images 和 Last render error；
 - 行内公式可读，六行块公式完整且字号接近正文，源码尾部不得越过占位区重新出现；
-- 图片和公式随滚动、宽高 resize 留在对应回答位置，无残影；
+- 正常字体大小下图片完整显示，不得依靠放大字体补足占位高度；图片和公式随滚动、宽高 resize 留在对应回答位置，无残影；
 - `off` 后立即恢复可复制的 Markdown/LaTeX 文本，不出现 ESC/OSC/APC 控制字符；
 - 失败时保留原始来源和简短错误，TUI 仍可继续输入、执行工具、退出。
 

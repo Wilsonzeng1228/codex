@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
 > 更新时间：2026-08-25
-> 当前状态：Phase 1、Phase 2、Phase 3 与 Phase 6 的实现已完成；Phase 4 只剩用户侧最终公式视觉签字，Phase 5 只剩总体规划要求的真实终端兼容矩阵。Windows WezTerm 已通过本地 PNG/JPEG/WebP/GIF 静态首帧、公网 HTTPS、TUN Fake-IP fallback、finalized history、后续普通消息保留、滚动、resize/reflow、任务切换、`/clear` 与退出 retirement 的真实视觉验收；私网 HTTPS 和无协议能力均保持文本降级。LaTeX 已接入 `$...$`/`$$...$$` 解析、RaTeX 进程内透明 PNG 渲染、异步协调、主题/宽度缓存键、资源限制和原文回退。`/rich-media [status|on|off|clear-cache]`、`[tui.rich_media]` 持久配置、用户文档、配套 skill 与可回滚安装器均已交付。最新 debug 二进制与官方 Code Mode host 已共同安装为独立的 `codex-rich`，真实工具调用成功，官方 `codex` 未被覆盖。用户最终截图暴露出多行 `aligned` 公式仍被固定六行压缩且回退源码尾部泄漏；当前修复改为逐行布局，并让块公式高度至少覆盖全部源码行，正在等待新版二进制复验。Sixel 与 Kitty Unicode placeholders 仍为后续可选扩展。
+> 当前状态：Phase 1、Phase 2、Phase 3 与 Phase 6 的实现已完成；Phase 4 只剩用户侧最终公式视觉签字，Phase 5 只剩总体规划要求的真实终端兼容矩阵。Windows WezTerm 已通过本地 PNG/JPEG/WebP/GIF 静态首帧、公网 HTTPS、TUN Fake-IP fallback、finalized history、后续普通消息保留、滚动、resize/reflow、任务切换、`/clear` 与退出 retirement 的真实视觉验收；私网 HTTPS 和无协议能力均保持文本降级。LaTeX 已接入 `$...$`/`$$...$$` 解析、RaTeX 进程内透明 PNG 渲染、异步协调、主题/宽度缓存键、资源限制和原文回退。`/rich-media [status|on|off|clear-cache]`、`[tui.rich_media]` 持久配置、用户文档、配套 skill 与可回滚安装器均已交付。最新 debug 二进制与官方 Code Mode host 已共同安装为独立的 `codex-rich`，真实工具调用成功，官方 `codex` 未被覆盖。两轮用户截图已依次关闭源码泄漏、Windows 隐藏目录路径损坏，并进一步定位多行公式可读高度不足与普通图片越出固定占位；当前修复让六行公式获得 18 行高度，并让 iTerm2 图片按真实宽高完整 contain，正在等待新版二进制复验。Sixel 与 Kitty Unicode placeholders 仍为后续可选扩展。
 
 ## 新对话启动指令
 
@@ -540,6 +540,13 @@ Phase 3 已选择 RaTeX `0.1.14` 并完成行内/块级公式、流式未闭合�
 - TDD 使用截图中的完整三相电压/电流公式确认第一个 RED 为 `actual 6 / expected 10`；加入后续验收 PNG 后又确认 CommonMark 将 `Wilsonzeng\.codex` 错解为 `Wilsonzeng.codex`，这解释了截图中图片缺失。最小修复把显示公式回退逐行写入逻辑 history，令 placement 高度取“至少六行”和“完整回退行数”的较大值，并在 Markdown 解析前保护 Windows drive path 的反斜杠；行内公式、HTTPS 图片、Markdown/copy/persisted text 均不变。
 - 多行公式组合测试和 Windows 原生/已转义路径测试均已 GREEN；完整 `just test -p codex-tui --status-level fail --final-status-level fail` 为 3810/3810 通过、10 项跳过。
 - 已用 `CARGO_BUILD_JOBS=1`、`CARGO_INCREMENTAL=0` 重建并安装标准 `codex-rich`；构建件与安装件 SHA-256 均为 `995036383CC8D9C0F47134FFC2364B65CD6EDBF098D8AF97A79325FA9F1E9911`，`--version` 为 `codex-cli 0.0.0`。构建后 target 为 17.54 GiB，低于 18 GiB 预警线；安装器保留上一版并未覆盖官方 `codex`。
+
+### 8.10.2 多行公式可读高度与 iTerm2 图片 contain
+
+- 第二轮用户截图确认源码和路径已正确，但六行公式仍小；固定四行的普通图片在正常字体下只显示上半段，放大终端字体后才因 cell 物理高度增加而完整。
+- 公式根因是十行 fallback 防泄漏高度仍小于六个数学行达到单行公式字号所需的 `6 × 3 = 18` 行。图片根因是 iTerm2 writer 发送 `width=<列>;height=<行>`，WezTerm 默认保持宽高比，宽图按列宽放大后会越出固定四行并被 composer 覆盖。
+- TDD 的两个 RED 分别为公式 `actual 10 / expected 18`，以及 961×235 图片在 80×4 cells、10×20 px/cell 下缺少预期的 327×80 px contain 命令。最小实现按 LaTeX `\\` 数量估算数学行并复用行内公式三行高度；普通 iTerm2 图片与公式共同使用显式像素纵横比拟合。Kitty、图片解码、缓存、Markdown/copy/persisted text 均不变。
+- 两项定向测试 GREEN；完整 `just test -p codex-tui --status-level fail --final-status-level fail` 为 3810/3810 通过、10 项跳过。
 
 ### 8.11 Phase 4 持久配置与缓存清理
 

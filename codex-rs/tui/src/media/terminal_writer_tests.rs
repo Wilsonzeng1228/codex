@@ -160,29 +160,33 @@ fn kitty_writer_skips_unavailable_remote_source() {
 
 #[test]
 #[serial]
-fn iterm2_writer_transmits_ready_https_image_bytes() {
+fn iterm2_writer_contains_ready_image_inside_reserved_pixel_rect() {
     let cell_id = MediaCellId::new(29).expect("non-zero media cell id");
     let mut registry = MediaPlacementRegistry::default();
     let update = registry.replace_active(vec![local_request(
         cell_id,
         "https://example.com/diagram.png".to_string(),
         Rect::new(
-            /*x*/ 2, /*y*/ 3, /*width*/ 10, /*height*/ 3,
+            /*x*/ 2, /*y*/ 3, /*width*/ 80, /*height*/ 4,
         ),
     )]);
     let fixture = png_fixture();
-    let loaded = loaded_fixture(fixture.clone());
+    let loaded =
+        loaded_fixture_with_dimensions(fixture.clone(), /*width*/ 961, /*height*/ 235);
     let mut output = Vec::new();
 
-    let report =
-        write_media_placement_update(&mut output, ImageProtocol::Iterm2Inline, &update, |_| {
-            MediaImageState::Ready(loaded.clone())
-        })
-        .expect("write downloaded HTTPS image bytes");
+    let report = write_media_placement_update_with_cell_pixels(
+        &mut output,
+        ImageProtocol::Iterm2Inline,
+        &update,
+        TerminalCellPixels::new(/*width*/ 10, /*height*/ 20),
+        |_| MediaImageState::Ready(loaded.clone()),
+    )
+    .expect("write downloaded HTTPS image bytes");
     let output = String::from_utf8(output).expect("iTerm2 command is UTF-8");
 
     assert!(output.contains(&format!(
-        "\x1b]1337;File=size={};width=10;height=3;inline=1:",
+        "\x1b]1337;File=size={};width=327px;height=80px;preserveAspectRatio=1;inline=1:",
         fixture.len()
     )));
     assert_eq!(report.placed, 1);
@@ -404,7 +408,7 @@ fn iterm2_writer_restores_cursor_without_suppressing_protocol_cursor_movement() 
     let output = String::from_utf8(output).expect("iTerm2 command is UTF-8");
 
     assert!(output.contains(&format!(
-        "\x1b]1337;File=size={};width=12;height=4;inline=1:",
+        "\x1b]1337;File=size={};width=64px;height=64px;preserveAspectRatio=1;inline=1:",
         second_fixture.len()
     )));
     assert!(!output.contains("doNotMoveCursor"));
