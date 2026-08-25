@@ -21,6 +21,7 @@ use crossterm::Command;
 use crossterm::cursor::MoveDown;
 use crossterm::cursor::MoveTo;
 use crossterm::cursor::MoveToColumn;
+use crossterm::cursor::MoveUp;
 use crossterm::cursor::RestorePosition;
 use crossterm::cursor::SavePosition;
 use crossterm::queue;
@@ -451,11 +452,23 @@ fn write_history_media_for_logical_row<W: Write>(
     logical_row: u16,
     placements: &[crate::media::PreparedMediaPlacement],
 ) -> io::Result<()> {
-    for placement in placements
-        .iter()
-        .filter(|placement| placement.rect.y == logical_row)
-    {
-        queue!(writer, SavePosition, MoveToColumn(placement.rect.x))?;
+    for placement in placements.iter().filter(|placement| {
+        placement
+            .rect
+            .y
+            .saturating_add(placement.rect.height.saturating_sub(1))
+            == logical_row
+    }) {
+        // WezTerm's iTerm2 inline images have no stable placement ID. Emitting a multi-row image
+        // on its first row lets the following reserved rows scroll or clear through the image,
+        // which can drop it during a height-only transcript replay. Wait until the whole reserved
+        // area has been written, then move back to its top before transmitting the image.
+        queue!(
+            writer,
+            SavePosition,
+            MoveUp(placement.rect.height.saturating_sub(1)),
+            MoveToColumn(placement.rect.x)
+        )?;
         writer.write_all(placement.command.as_bytes())?;
         queue!(writer, RestorePosition)?;
     }
@@ -622,7 +635,7 @@ mod tests {
     use ratatui::style::Color;
 
     #[test]
-    fn history_media_is_emitted_on_its_reserved_row_without_absolute_y_positioning() {
+    fn history_media_is_emitted_after_its_reserved_rows_without_absolute_y_positioning() {
         let placement = crate::media::PreparedMediaPlacement {
             rect: Rect::new(
                 /*x*/ 4, /*y*/ 1, /*width*/ 12, /*height*/ 3,
@@ -638,14 +651,32 @@ mod tests {
             std::slice::from_ref(&placement),
         )
         .expect("skip earlier row");
-        write_history_media_for_logical_row(&mut output, /*logical_row*/ 1, &[placement])
-            .expect("write placement row");
+        write_history_media_for_logical_row(
+            &mut output,
+            /*logical_row*/ 1,
+            std::slice::from_ref(&placement),
+        )
+        .expect("defer placement until its reserved rows are written");
+        assert!(output.is_empty());
+        write_history_media_for_logical_row(
+            &mut output,
+            /*logical_row*/ 2,
+            std::slice::from_ref(&placement),
+        )
+        .expect("defer placement until its reserved rows are written");
+        assert!(output.is_empty());
+        write_history_media_for_logical_row(&mut output, /*logical_row*/ 3, &[placement])
+            .expect("write placement from the final reserved row");
         let output = String::from_utf8(output).expect("terminal output is UTF-8");
 
         assert_eq!(output.matches("<kitty-placement>").count(), 1);
         assert!(
             output.contains("\x1b[5G"),
             "must move to zero-based column four"
+        );
+        assert!(
+            output.contains("\x1b[2A"),
+            "must move back to the top of the three-row placement"
         );
         assert!(
             !output.contains("H"),

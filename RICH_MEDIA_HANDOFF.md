@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
 > 更新时间：2026-08-25
-> 当前状态：Phase 1、Phase 2、Phase 3 已完成，Phase 4 交互与回归进行中。Windows WezTerm 已通过本地 PNG/JPEG/WebP/GIF 静态首帧、公网 HTTPS、TUN Fake-IP fallback、finalized history、后续普通消息保留、滚动、resize/reflow、任务切换、`/clear` 与退出 retirement 的真实视觉验收；私网 HTTPS 和无协议能力均保持文本降级。LaTeX 已接入 `$...$`/`$$...$$` 解析、RaTeX 进程内透明 PNG 渲染、异步协调、主题/宽度缓存键、资源限制和原文回退。Phase 4 已新增 session-local `/rich-media [status|on|off]`，真实 WezTerm 已验证公式显示、开关重排、无 override 自动探测和 `/copy` 原始 Markdown 语义；前两版小窗口修复分别暴露裁切和公式过小，现已保留显式像素限界，同时允许小 RaTeX 位图在占位框内等比放大，并把行内公式占位增至三行。自动化回归完成，仍待用户侧用新标准二进制复验视觉尺寸。Sixel 与 Kitty Unicode placeholders 仍为后续可选扩展。
+> 当前状态：Phase 1、Phase 2、Phase 3 已完成，Phase 4 交互与回归进行中。Windows WezTerm 已通过本地 PNG/JPEG/WebP/GIF 静态首帧、公网 HTTPS、TUN Fake-IP fallback、finalized history、后续普通消息保留、滚动、resize/reflow、任务切换、`/clear` 与退出 retirement 的真实视觉验收；私网 HTTPS 和无协议能力均保持文本降级。LaTeX 已接入 `$...$`/`$$...$$` 解析、RaTeX 进程内透明 PNG 渲染、异步协调、主题/宽度缓存键、资源限制和原文回退。Phase 4 已新增 session-local `/rich-media [status|on|off]`，真实 WezTerm 已验证公式显示、开关重排、无 override 自动探测和 `/copy` 原始 Markdown 语义；小窗口公式继续采用显式像素限界和占位框内等比缩放，行内公式保持三行，块级公式现至少六行，并在完整写入多行占位后再发送协议图像，避免窗口高度缩小时图像被滚动冲掉。自动化回归完成，仍待用户侧用新标准二进制复验视觉尺寸和高度缩放。Sixel 与 Kitty Unicode placeholders 仍为后续可选扩展。
 
 ## 新对话启动指令
 
@@ -511,13 +511,22 @@ Phase 3 已选择 RaTeX `0.1.14` 并完成行内/块级公式、流式未闭合�
 - `just fix -p codex-tui` 退出码 0，仅保留 pets 既有两处 `expect_used` 警告；`just fmt` 仍因仓库缺少 `tools/buildifier` 失败，随后 `cargo fmt --all -- --check` 退出码 0。按纪律未在 fix/fmt 后重跑测试。
 - 已用 `CARGO_INCREMENTAL=0`、`CARGO_BUILD_JOBS=1` 成功重建标准 `codex-rs/target/debug/codex.exe`；`--version` 输出 `codex-cli 0.0.0`，时间戳为 2026-08-25 00:35:19。构建后 target 约 16.23 GiB，低于 18 GiB 停止线。
 
+### 8.10 Phase 4 块级公式尺寸与高度缩放保留修复
+
+- 用户用 8.9 标准二进制复验后确认行内公式已可读，但块级公式仍可再放大；窗口只缩短少量高度时，块公式的空白占位和后续文本仍存在，协议图像本身却消失。由此排除 Markdown 解析和布局丢失，定位为无稳定 placement ID 的 iTerm2 inline 图像在多行占位尚未写完时过早发送，后续保留行与高度重排滚动会穿过图像区域。
+- 最小修复保持行内公式三行不变，把块级公式占位设为至少六行；history 插入不再在多行 placement 的首行发送媒体，而是在其最后一行写完后相对回到 placement 顶部再发送，避免占位区自身的后续写入破坏图像。普通图片、Kitty、RaTeX 源图、Markdown/copy/persisted text 均不变。
+- TDD 先确认两个 RED：块公式传入三行配置时实际高度仍为三而非六；三行 history placement 仍在首行立即发送。最小实现后目标测试 2/2 GREEN；Markdown/history/resize 相邻回归 45/45 通过。
+- 完整 `just test -p codex-tui --status-level fail --final-status-level fail` 共运行 3804 项，3802 项通过、2 项失败、10 项跳过；失败仍是既有项目权限历史测试和 pets Kitty 本地文件测试，没有新增失败。
+- `just fix -p codex-tui` 退出码 0，仅保留 pets 既有两处 `expect_used` 警告；`just fmt` 仍因仓库缺少 `tools/buildifier` 失败，随后 `cargo fmt --all -- --check` 退出码 0。按纪律未在 fix/fmt 后重跑测试。
+- `cargo build -p codex-cli` 已完成链接，但运行中的旧 `target/debug/codex.exe`（PID 22072）被 Windows 锁定，Cargo 在最终覆盖步骤报 `os error 5`。已将本次 `target/debug/deps/codex.exe` 复制为 `target/debug/codex-rich-next.exe`，`--version` 输出 `codex-cli 0.0.0`，时间戳为 2026-08-25 09:03:23；构建后 target 约 16.23 GiB，低于 18 GiB 预警线。
+
 ## 9. 尚未完成
 
 - active streaming 瞬间没有单独截图，当前可靠证据集中在 finalized history、滚动、resize/reflow、退出 retirement 与文本降级；
 - 缓存尚无用户清理命令或磁盘层；
 - Sixel 编码仍留在 pets 专用实现，尚未完全移入通用媒体层；
 - 媒体节点尚未把公式/图片的源字节范围暴露为公共模型字段；
-- LaTeX 的真实 WezTerm 公式显示、运行时开关和复制语义已执行；第三版小窗口可读尺寸修复与自动化回归已完成，行内三行放大、块级四行放大以及公式专项 resize、滚动与任务切换仍待标准 `codex.exe` 真实视觉确认；
+- LaTeX 的真实 WezTerm 公式显示、运行时开关和复制语义已执行；行内三行已由用户确认可读，块级至少六行及高度缩放保留修复已完成自动化回归，仍待新标准 `codex.exe` 真实视觉确认；
 - 富媒体持久配置、用户文档与最终打包尚未开始；本轮只实现 session-local 开关，没有引入未在官方配置 schema 中定义的新键。
 
 阶段状态：
@@ -548,7 +557,7 @@ Windows 下 `git status --short` 当前会显示：
 - TUI 测试优先 `just test -p codex-tui <filter>`；
 - 新行为必须先写失败测试，确认 RED 后做最小实现并确认 GREEN；
 - 本轮所有文件完成后统一提交，禁止 `git add .`；
-- 本轮预计提交信息：`fix: 放大占位区域内的公式`。
+- 本轮预计提交信息：`fix: 修复块级公式尺寸与缩放丢失`。
 
 ## 11. 新对话的起手命令
 

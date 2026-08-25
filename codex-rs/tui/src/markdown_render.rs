@@ -87,6 +87,7 @@ mod streaming;
 mod table_key_value;
 
 const INLINE_LATEX_PLACEHOLDER_ROWS: u16 = 3;
+const DISPLAY_LATEX_MIN_PLACEHOLDER_ROWS: u16 = 6;
 
 pub(crate) use streaming::StreamingMarkdownRender;
 pub(crate) use streaming::render_streaming_markdown_lines_with_width_and_cwd;
@@ -2039,6 +2040,7 @@ where
             self.image_placeholder_rows
                 .map(MediaPlaceholderRows::get)
                 .unwrap_or(1)
+                .max(DISPLAY_LATEX_MIN_PLACEHOLDER_ROWS)
         } else {
             INLINE_LATEX_PLACEHOLDER_ROWS
         };

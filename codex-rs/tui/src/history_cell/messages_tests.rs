@@ -117,10 +117,11 @@ fn finalized_markdown_media_layout_keeps_block_latex_fallback_under_placement() 
                 ordinal: 0,
             },
             rect: Rect::new(
-                /*x*/ 2, /*y*/ 2, /*width*/ 30, /*height*/ 3
+                /*x*/ 2, /*y*/ 2, /*width*/ 30, /*height*/ 6
             ),
         }]
     );
+    assert_eq!(visible_lines(layout.lines).len(), 10);
     assert!(visible_text.contains("$$\\frac{1}{s+1}$$"));
     assert_eq!(cell.raw_lines(), raw_lines_from_source(source));
 }
