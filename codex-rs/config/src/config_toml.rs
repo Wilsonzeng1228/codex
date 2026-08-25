@@ -52,7 +52,7 @@ use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use codex_utils_path::normalize_for_path_comparison;
+use dunce::canonicalize as normalize_path;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -838,7 +838,7 @@ impl ConfigToml {
 fn normalized_project_lookup_keys(path: &Path) -> Vec<String> {
     let normalized_path = normalize_project_lookup_key(path.to_string_lossy().to_string());
     let normalized_canonical_path = normalize_project_lookup_key(
-        normalize_for_path_comparison(path)
+        normalize_path(path)
             .unwrap_or_else(|_| path.to_path_buf())
             .to_string_lossy()
             .to_string(),
