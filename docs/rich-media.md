@@ -48,11 +48,11 @@ Windows 原生路径可以直接包含 `.codex` 等隐藏目录；解析器会�
 ```toml
 [tui.rich_media]
 enabled = true
-placeholder_rows = 6
+placeholder_rows = 12
 ```
 
 - `enabled`：`true` 时在探测到受支持协议后启动富媒体；`false` 时以纯文本启动；省略时保持兼容默认行为。
-- `placeholder_rows`：图片占位高度，范围 `1..=32`。块公式至少占 6 行，并按每个数学行 3 个终端行自动扩展，同时覆盖完整源码回退；普通 iTerm2 图片会保持宽高比 contain 到这些占位行内。
+- `placeholder_rows`：图片占位高度，范围 `1..=32`，默认 12 行，避免宽图及图内文字被压入过矮区域。块公式至少占 6 行，并按每个数学行 3 个终端行自动扩展，同时覆盖完整源码回退；普通 iTerm2 图片会保持宽高比 contain 到这些占位行内。
 
 诊断环境变量的优先级高于持久配置：
 

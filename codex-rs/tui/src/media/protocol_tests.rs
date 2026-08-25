@@ -9,6 +9,14 @@ use super::image_support_for_terminal;
 use super::parse_chat_media_capability_override;
 
 #[test]
+fn default_placeholder_height_keeps_wide_image_text_readable() {
+    let enabled = parse_chat_media_capability_override(Some("iterm2"), None)
+        .expect("valid explicit iTerm2 override");
+
+    assert_eq!(enabled.placeholder_rows.get(), 12);
+}
+
+#[test]
 fn explicit_chat_media_override_is_bounded_and_disabled_by_default() {
     let enabled = parse_chat_media_capability_override(Some("kitty"), Some("4"))
         .expect("valid explicit Kitty override");

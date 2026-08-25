@@ -6,7 +6,7 @@ use codex_terminal_detection::TerminalName;
 use codex_terminal_detection::terminal_info;
 
 const ITERM2_KITTY_MIN_VERSION: (u64, u64, u64) = (3, 6, 0);
-const DEFAULT_CHAT_MEDIA_PLACEHOLDER_ROWS: u16 = 4;
+const DEFAULT_CHAT_MEDIA_PLACEHOLDER_ROWS: u16 = 12;
 const MAX_CHAT_MEDIA_PLACEHOLDER_ROWS: u16 = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

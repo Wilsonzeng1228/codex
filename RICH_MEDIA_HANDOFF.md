@@ -139,7 +139,7 @@ resolver 本身仍只做纯解析，不访问文件和网络。新的远程策�
 - history 插入、初始 replay 和 resize/reflow 会携带 `MediaLayout.placements`，并同步处理 cell 分隔行、前端裁剪和历史提示行造成的 Y 偏移。
 - active placement 通过可注入 writer 使用 frame 绝对 `Rect`；history placement 在对应保留行写入 terminal scrollback 时只移动列并立即发送，避免把历史图片绑定到易变化的屏幕绝对 Y。
 - `MediaPlacementUpdate` 已接到现有 `kitty_transmit_png_*` 和 `kitty_delete_image` 抽象；删除先于重放，redraw、resize/reflow、历史清理和 TUI drop 都有明确 retirement 路径。
-- 生产环境可显式设置 `CODEX_TUI_MEDIA_CAPABILITY_OVERRIDE=kitty` 或 `iterm2`；Windows WezTerm 实测必须使用 `iterm2`。占位行由 `CODEX_TUI_MEDIA_PLACEHOLDER_ROWS` 指定，合法范围 1–32，默认 4。未显式启用时仍为 `None`，不会发送聊天媒体协议字节。
+- 生产环境可显式设置 `CODEX_TUI_MEDIA_CAPABILITY_OVERRIDE=kitty` 或 `iterm2`；Windows WezTerm 实测必须使用 `iterm2`。占位行由 `CODEX_TUI_MEDIA_PLACEHOLDER_ROWS` 指定，合法范围 1–32，默认 12；该默认值避免宽图及图内文字被压入过矮区域。未显式启用时仍为 `None`，不会发送聊天媒体协议字节。
 - writer 当前接受本地来源和已经安全下载完成的 HTTPS Ready 状态；两类 loader 都按文件 magic 识别并完整解码，统一准备为 PNG。Pending、拒绝来源、未知格式和损坏图片继续文本降级。协议字节只写入终端 sink，不进入 Ratatui `Line`、raw Markdown、复制文本或持久化 transcript。
 - 注册表的更新结果显式给出 `retired` 与 `added` MediaId，为后续复用 Kitty 删除/发送接口提供边界。
 - 流式 assistant cell 会先写入文本 fallback；final consolidation 若发现媒体节点且 capability 开启，会强制一次 source-backed reflow，使图片占位和 placement 真正进入 history。该缺口已用 `0` placement 的 RED 和 `1` placement 的 GREEN 覆盖。
@@ -548,6 +548,11 @@ Phase 3 已选择 RaTeX `0.1.14` 并完成行内/块级公式、流式未闭合�
 - TDD 的两个 RED 分别为公式 `actual 10 / expected 18`，以及 961×235 图片在 80×4 cells、10×20 px/cell 下缺少预期的 327×80 px contain 命令。最小实现按 LaTeX `\\` 数量估算数学行并复用行内公式三行高度；普通 iTerm2 图片与公式共同使用显式像素纵横比拟合。Kitty、图片解码、缓存、Markdown/copy/persisted text 均不变。
 - 两项定向测试 GREEN；完整 `just test -p codex-tui --status-level fail --final-status-level fail` 为 3810/3810 通过、10 项跳过。
 - 已用 `CARGO_BUILD_JOBS=1`、`CARGO_INCREMENTAL=0` 重建并覆盖安装标准 `codex-rich`；构建件与安装件 SHA-256 均为 `2448821AD1AF0C54BBDFD68C087ACA5C382438B7DE795CC16E82AAF834101C1E`，`--version` 为 `codex-cli 0.0.0`。安装后 target 为 17.54 GiB，低于 18 GiB 预警线；用户级 `PATH` 已包含安装目录，官方 `codex` 未被覆盖。
+
+### 8.10.3 普通宽图可读高度
+
+- 用户复验确认六行公式效果良好，但 961×235 的宽图被完整 contain 到默认四行后，图内终端文字随整图缩得过小。布局阶段早于异步图片解码，真实宽高尚不可用；本轮保持加载、scrollback 与公式行高逻辑不变，仅把未配置时的普通媒体默认占位从 4 行提高到 12 行。显式 `placeholder_rows` 仍可覆盖默认值。
+- 按用户要求未运行 3810 项全量回归；默认占位协议测试、iTerm2 图片 contain writer 测试、六行公式 18 行测试共三项定向测试全部通过，格式与 diff 检查通过。随后精确清理 `codex-tui` 释放 3.9 GiB 并重建 `codex-cli`；构建件 SHA-256 为 `A389E243086B510A7CAC75AA2735B027EB3521860893886808D77F3ABE06A0C5`，target 为 17.53 GiB。
 
 ### 8.11 Phase 4 持久配置与缓存清理
 
