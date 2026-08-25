@@ -127,6 +127,55 @@ fn finalized_markdown_media_layout_keeps_block_latex_fallback_under_placement() 
 }
 
 #[test]
+fn finalized_multiline_block_latex_reserves_every_fallback_row() {
+    let source = concat!(
+        "Before\n\n",
+        "$$\n",
+        "\\begin{aligned}\n",
+        "u_1(t) &= U_m\\cos(\\omega t) \\\\\n",
+        "u_2(t) &= U_m\\cos(\\omega t-\\frac{2\\pi}{3}) \\\\\n",
+        "u_3(t) &= U_m\\cos(\\omega t+\\frac{2\\pi}{3}) \\\\\n",
+        "i_1(t) &= I_m\\cos(\\omega t-\\varphi) \\\\\n",
+        "i_2(t) &= I_m\\cos(\\omega t-\\frac{2\\pi}{3}-\\varphi) \\\\\n",
+        "i_3(t) &= I_m\\cos(\\omega t+\\frac{2\\pi}{3}-\\varphi)\n",
+        "\\end{aligned}\n",
+        "$$\n\n",
+        "![acceptance](C:\\Users\\Wilsonzeng\\.codex\\artifacts\\acceptance.png)",
+    );
+    let cell = AgentMarkdownCell::new(source.to_string(), Path::new("/tmp"));
+    let placeholder_rows =
+        crate::media::MediaPlaceholderRows::try_from(3).expect("non-zero placeholder height");
+
+    let layout = cell.display_media_layout(/*width*/ 96, Some(placeholder_rows));
+    let placement = layout.placements.first().expect("block formula placement");
+    let fallback_rows = source[source.find("$$").unwrap()..source.rfind("$$").unwrap() + 2]
+        .lines()
+        .count();
+
+    assert_eq!(usize::from(placement.rect.height), fallback_rows);
+    assert!(
+        layout
+            .lines
+            .iter()
+            .all(|line| !line.line.to_string().contains('\n')),
+        "each fallback row must be a distinct logical history row"
+    );
+    let image = layout
+        .placements
+        .get(1)
+        .expect("image following the block formula");
+    assert_matches!(
+        &image.node,
+        crate::media::MediaNode::Image { source, .. }
+            if source == r"C:\Users\Wilsonzeng\.codex\artifacts\acceptance.png"
+    );
+    assert!(
+        image.rect.y >= placement.rect.y.saturating_add(placement.rect.height),
+        "following image must be placed after every block-formula row"
+    );
+}
+
+#[test]
 fn finalized_markdown_media_layout_reserves_three_rows_for_readable_inline_latex() {
     let source = "Gain is $x^2+y^2$";
     let cell = AgentMarkdownCell::new(source.to_string(), Path::new("/tmp"));

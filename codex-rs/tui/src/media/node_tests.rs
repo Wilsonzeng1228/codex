@@ -27,6 +27,22 @@ fn extracts_only_markdown_images_in_source_order() {
 }
 
 #[test]
+fn preserves_native_windows_image_paths_with_hidden_directories() {
+    let expected = MediaNode::Image {
+        source: r"C:\Users\Wilsonzeng\.codex\artifacts\acceptance.png".to_string(),
+        alt: "acceptance".to_string(),
+        ordinal: 0,
+    };
+
+    for markdown in [
+        r"![acceptance](C:\Users\Wilsonzeng\.codex\artifacts\acceptance.png)",
+        r"![acceptance](C:\\Users\\Wilsonzeng\\.codex\\artifacts\\acceptance.png)",
+    ] {
+        assert_eq!(extract_media_nodes(markdown), vec![expected.clone()]);
+    }
+}
+
+#[test]
 fn extracts_latex_and_images_in_source_order_without_touching_code_or_unclosed_math() {
     let markdown = concat!(
         "Before $x^2$ ",

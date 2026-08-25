@@ -50,7 +50,7 @@ pub(crate) fn rewrite_latex(markdown: &str) -> LatexRewrite {
 
     if matches.is_empty() {
         return LatexRewrite {
-            markdown: markdown.to_string(),
+            markdown: protect_windows_link_destinations(markdown),
             specs: Vec::new(),
         };
     }
@@ -84,9 +84,60 @@ pub(crate) fn rewrite_latex(markdown: &str) -> LatexRewrite {
     rewritten.push_str(&markdown[cursor..]);
 
     LatexRewrite {
-        markdown: rewritten,
+        markdown: protect_windows_link_destinations(&rewritten),
         specs,
     }
+}
+
+/// Protects native drive paths from CommonMark backslash escaping inside link destinations.
+///
+/// A path such as `C:\Users\name\.codex\image.png` otherwise loses the separator before the
+/// hidden directory because `\.` is a valid CommonMark escape. Normalize each separator run to
+/// the escaped Markdown form before pulldown-cmark parses the rewritten document. Generated LaTeX
+/// destinations and non-Windows links do not match the drive-path prefix and stay byte-for-byte
+/// unchanged.
+fn protect_windows_link_destinations(markdown: &str) -> String {
+    let bytes = markdown.as_bytes();
+    let mut protected = String::with_capacity(markdown.len());
+    let mut copied_until = 0usize;
+    let mut cursor = 0usize;
+
+    while cursor + 4 < bytes.len() {
+        let destination_start = cursor + 2;
+        let starts_windows_path = bytes[cursor] == b']'
+            && bytes[cursor + 1] == b'('
+            && bytes[destination_start].is_ascii_alphabetic()
+            && bytes[destination_start + 1] == b':'
+            && bytes[destination_start + 2] == b'\\';
+        if !starts_windows_path {
+            cursor += 1;
+            continue;
+        }
+
+        let Some(relative_end) =
+            markdown[destination_start..].find(|ch| matches!(ch, ')' | '\r' | '\n'))
+        else {
+            break;
+        };
+        let destination_end = destination_start + relative_end;
+        protected.push_str(&markdown[copied_until..destination_start]);
+        let mut chars = markdown[destination_start..destination_end]
+            .chars()
+            .peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\\' {
+                while chars.next_if_eq(&'\\').is_some() {}
+                protected.push_str("\\\\");
+            } else {
+                protected.push(ch);
+            }
+        }
+        copied_until = destination_end;
+        cursor = destination_end;
+    }
+
+    protected.push_str(&markdown[copied_until..]);
+    protected
 }
 
 fn math_source_range(

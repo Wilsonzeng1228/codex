@@ -34,10 +34,12 @@ $$
 
 回答进入 finalized history 后，依次缩窄窗口宽度、缩短窗口高度、恢复窗口、上下滚动，再执行 `/rich-media off`。
 
+在 WezTerm 中粘贴上述纯文本请用 `Ctrl+Shift+V`；`Ctrl+V` 是 Codex 的“从剪贴板附加图片”，剪贴板里只有文本时会显示 `Failed to paste image`，这不属于富媒体回答渲染失败。
+
 通过条件：
 
 - `status` 能报告 Terminal、State、Protocol、Renderer、Remote images 和 Last render error；
-- 行内公式可读，六行块公式完整且未越过占位区；
+- 行内公式可读，六行块公式完整且字号接近正文，源码尾部不得越过占位区重新出现；
 - 图片和公式随滚动、宽高 resize 留在对应回答位置，无残影；
 - `off` 后立即恢复可复制的 Markdown/LaTeX 文本，不出现 ESC/OSC/APC 控制字符；
 - 失败时保留原始来源和简短错误，TUI 仍可继续输入、执行工具、退出。

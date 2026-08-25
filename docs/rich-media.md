@@ -37,6 +37,8 @@ pwsh -File .\scripts\install-codex-rich.ps1 -Rollback
 - 本地图片：`![示波器波形](D:\measurements\scope.png)`
 - 远程图片：`![系统框图](https://example.org/block-diagram.png)`
 
+Windows 原生路径可以直接包含 `.codex` 等隐藏目录；解析器会保护目录前的反斜杠，避免 CommonMark 把 `\.` 当成转义。
+
 图片只引用已有文件；本项目不包含图片生成能力。即使终端不能显示图像，原始公式、图片 alt 与地址仍保留在历史、复制和持久化文本中。
 
 ## 持久配置
@@ -50,7 +52,7 @@ placeholder_rows = 6
 ```
 
 - `enabled`：`true` 时在探测到受支持协议后启动富媒体；`false` 时以纯文本启动；省略时保持兼容默认行为。
-- `placeholder_rows`：图片占位高度，范围 `1..=32`。块公式为保证可读性仍至少占 6 行。
+- `placeholder_rows`：图片占位高度，范围 `1..=32`。块公式为保证可读性至少占 6 行；多行公式还会自动扩展到足以覆盖完整源码回退，避免透明 PNG 下泄漏后半段 LaTeX。
 
 诊断环境变量的优先级高于持久配置：
 

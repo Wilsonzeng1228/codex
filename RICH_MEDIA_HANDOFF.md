@@ -1,7 +1,7 @@
 # Codex TUI 富媒体项目阶段性交接
 
 > 更新时间：2026-08-25
-> 当前状态：Phase 1、Phase 2、Phase 3 与 Phase 6 的实现已完成；Phase 4 只剩用户侧最终公式视觉签字，Phase 5 只剩总体规划要求的真实终端兼容矩阵。Windows WezTerm 已通过本地 PNG/JPEG/WebP/GIF 静态首帧、公网 HTTPS、TUN Fake-IP fallback、finalized history、后续普通消息保留、滚动、resize/reflow、任务切换、`/clear` 与退出 retirement 的真实视觉验收；私网 HTTPS 和无协议能力均保持文本降级。LaTeX 已接入 `$...$`/`$$...$$` 解析、RaTeX 进程内透明 PNG 渲染、异步协调、主题/宽度缓存键、资源限制和原文回退。`/rich-media [status|on|off|clear-cache]`、`[tui.rich_media]` 持久配置、用户文档、配套 skill 与可回滚安装器均已交付。最新 debug 二进制与官方 Code Mode host 已共同安装为独立的 `codex-rich`，真实工具调用成功，官方 `codex` 未被覆盖。块级公式至少六行及高度缩放修复已有自动日志和回归证据，仍待用户肉眼确认最终尺寸。Sixel 与 Kitty Unicode placeholders 仍为后续可选扩展。
+> 当前状态：Phase 1、Phase 2、Phase 3 与 Phase 6 的实现已完成；Phase 4 只剩用户侧最终公式视觉签字，Phase 5 只剩总体规划要求的真实终端兼容矩阵。Windows WezTerm 已通过本地 PNG/JPEG/WebP/GIF 静态首帧、公网 HTTPS、TUN Fake-IP fallback、finalized history、后续普通消息保留、滚动、resize/reflow、任务切换、`/clear` 与退出 retirement 的真实视觉验收；私网 HTTPS 和无协议能力均保持文本降级。LaTeX 已接入 `$...$`/`$$...$$` 解析、RaTeX 进程内透明 PNG 渲染、异步协调、主题/宽度缓存键、资源限制和原文回退。`/rich-media [status|on|off|clear-cache]`、`[tui.rich_media]` 持久配置、用户文档、配套 skill 与可回滚安装器均已交付。最新 debug 二进制与官方 Code Mode host 已共同安装为独立的 `codex-rich`，真实工具调用成功，官方 `codex` 未被覆盖。用户最终截图暴露出多行 `aligned` 公式仍被固定六行压缩且回退源码尾部泄漏；当前修复改为逐行布局，并让块公式高度至少覆盖全部源码行，正在等待新版二进制复验。Sixel 与 Kitty Unicode placeholders 仍为后续可选扩展。
 
 ## 新对话启动指令
 
@@ -532,6 +532,14 @@ Phase 3 已选择 RaTeX `0.1.14` 并完成行内/块级公式、流式未闭合�
 - 完整 `just test -p codex-tui --status-level fail --final-status-level fail` 共运行 3804 项，3802 项通过、2 项失败、10 项跳过；失败仍是既有项目权限历史测试和 pets Kitty 本地文件测试，没有新增失败。
 - `just fix -p codex-tui` 退出码 0，仅保留 pets 既有两处 `expect_used` 警告；`just fmt` 仍因仓库缺少 `tools/buildifier` 失败，随后 `cargo fmt --all -- --check` 退出码 0。按纪律未在 fix/fmt 后重跑测试。
 - `cargo build -p codex-cli` 已完成链接，但运行中的旧 `target/debug/codex.exe`（PID 22072）被 Windows 锁定，Cargo 在最终覆盖步骤报 `os error 5`。已将本次 `target/debug/deps/codex.exe` 复制为 `target/debug/codex-rich-next.exe`，`--version` 输出 `codex-cli 0.0.0`，时间戳为 2026-08-25 09:03:23；构建后 target 约 16.23 GiB，低于 18 GiB 预警线。
+
+### 8.10.1 多行块公式按真实回退行数占位
+
+- 用户最终 WezTerm 截图显示六行 `aligned` 公式被压得几乎不可读，且 `i_2`、`i_3`、`\end{aligned}` 和 `$$` 在 PNG 下方重新露出；紧随其后的本地 PNG 也没有出现在预期位置。
+- 根因是公式 Markdown 的十行源码回退仍装在一个含换行符的 span 中，而 placement 固定只有六行。终端处理 span 内换行时会前进物理光标，但布局注册表仍只前进一个逻辑行，导致遮罩不足、公式像素高度过小，并让后续媒体坐标失配。
+- TDD 使用截图中的完整三相电压/电流公式确认第一个 RED 为 `actual 6 / expected 10`；加入后续验收 PNG 后又确认 CommonMark 将 `Wilsonzeng\.codex` 错解为 `Wilsonzeng.codex`，这解释了截图中图片缺失。最小修复把显示公式回退逐行写入逻辑 history，令 placement 高度取“至少六行”和“完整回退行数”的较大值，并在 Markdown 解析前保护 Windows drive path 的反斜杠；行内公式、HTTPS 图片、Markdown/copy/persisted text 均不变。
+- 多行公式组合测试和 Windows 原生/已转义路径测试均已 GREEN；完整 `just test -p codex-tui --status-level fail --final-status-level fail` 为 3810/3810 通过、10 项跳过。
+- 已用 `CARGO_BUILD_JOBS=1`、`CARGO_INCREMENTAL=0` 重建并安装标准 `codex-rich`；构建件与安装件 SHA-256 均为 `995036383CC8D9C0F47134FFC2364B65CD6EDBF098D8AF97A79325FA9F1E9911`，`--version` 为 `codex-cli 0.0.0`。构建后 target 为 17.54 GiB，低于 18 GiB 预警线；安装器保留上一版并未覆盖官方 `codex`。
 
 ### 8.11 Phase 4 持久配置与缓存清理
 

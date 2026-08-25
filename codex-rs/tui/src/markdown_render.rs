@@ -2036,11 +2036,20 @@ where
             .unwrap_or_default();
         let x = prefix_width + current_width;
         let available_width = wrap_width.saturating_sub(x);
+        // A display formula may contain physical newlines (for example an `aligned` block). Its
+        // transparent PNG must cover every fallback row; otherwise the unmasked tail leaks into
+        // scrollback and shifts every later media placement away from its logical row.
+        let fallback_rows = if latex.display {
+            u16::try_from(latex.full_source.lines().count().max(1)).unwrap_or(u16::MAX)
+        } else {
+            1
+        };
         let rows = if latex.display {
             self.image_placeholder_rows
                 .map(MediaPlaceholderRows::get)
                 .unwrap_or(1)
                 .max(DISPLAY_LATEX_MIN_PLACEHOLDER_ROWS)
+                .max(fallback_rows)
         } else {
             INLINE_LATEX_PLACEHOLDER_ROWS
         };
@@ -2054,11 +2063,24 @@ where
         }
 
         let row = self.text.len();
-        self.push_image_fallback_span(latex.full_source.into());
-        if latex.display || rows > 1 {
-            for _ in 1..rows {
+        if latex.display {
+            // Keep terminal control and layout in terms of logical rows. Leaving embedded `\n`
+            // inside one span lets the terminal advance without updating placement coordinates.
+            for (index, line) in latex.full_source.lines().enumerate() {
+                if index > 0 {
+                    self.push_line(Line::default());
+                }
+                self.push_image_fallback_span(line.to_string().into());
+            }
+        } else {
+            self.push_image_fallback_span(latex.full_source.into());
+        }
+        if rows > fallback_rows {
+            for _ in fallback_rows..rows {
                 self.push_line(Line::default());
             }
+        }
+        if latex.display || rows > 1 {
             self.flush_current_line();
         }
 
